@@ -1,0 +1,11 @@
+class Main {
+  main() : Object { 
+    {
+      out_string("Welcome!\n");
+      let a : Int <- 9 in {
+      if 3 < 5 then a <- 3 else a <- 5 fi;
+      out_int(a);
+    };
+    }
+  };
+};
