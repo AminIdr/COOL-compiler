@@ -4,9 +4,8 @@
 @str.3 = constant [4 x i8] c"%*c\00"
 @str.4 = constant [3 x i8] c"%d\00"
 @io_instance = global { i8* } zeroinitializer
-@str.6 = constant [15 x i8] c"I am an animal\00"
-@str.7 = constant [13 x i8] c"Parent Class\00"
-@str.8 = constant [3 x i8] c"Hi\00"
+@str.6 = constant [16 x i8] c"I am an animal\0A\00"
+@str.7 = constant [5 x i8] c"Hi, \00"
 @main_instance = global { i8* } zeroinitializer
 
 declare i32 @printf(i8* %format, ...)
@@ -52,14 +51,13 @@ define i32 @IO_in_int({ i8* }* %self) {
 
 define i8* @Animal_say_hello({ i8* }* %self) {
 0:
-	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [15 x i8]* @str.6)
-	%2 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [13 x i8]* @str.7)
-	ret { i8* }* %2
+	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [16 x i8]* @str.6)
+	ret { i8* }* %1
 }
 
 define i8* @Main_main({ i8* }* %self) {
 0:
-	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [3 x i8]* @str.8)
+	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.7)
 	%2 = alloca { i8* }*
 	%3 = call i8* @malloc(i32 8)
 	%4 = bitcast i8* %3 to { i8* }*

@@ -22,55 +22,66 @@ type Generator struct {
 	mallocFunc       *ir.Func
 	ifCounter        int
 	whileCounter     int
+	classInheritance map[string]string   // Maps class name to parent class name
+	classFields      map[string][]string // Maps class name to field names in order
 }
 
 func NewGenerator() *Generator {
 	g := &Generator{
-		module:       ir.NewModule(),
-		classes:      make(map[string]types.Type),
-		symbolTable:  make(map[string]map[string]value.Value),
-		ifCounter:    0,
-		whileCounter: 0,
+		module:           ir.NewModule(),
+		classes:          make(map[string]types.Type),
+		symbolTable:      make(map[string]map[string]value.Value),
+		ifCounter:        0,
+		whileCounter:     0,
+		classInheritance: make(map[string]string),
+		classFields:      make(map[string][]string),
 	}
 	return g
 }
 
-// func (g *Generator) createClassType(class *ast.Class) {
-// 	// Create struct type for class attributes
-// 	fields := make([]types.Type, 0)
-
-// 	// Add vtable pointer as first field - change from void to i8
-// 	fields = append(fields, types.NewPointer(types.I8)) // Changed from types.Void
-
-// 	// Add fields for class attributes
-// 	for _, feature := range class.Features {
-// 		if attr, ok := feature.(*ast.Attribute); ok {
-// 			fields = append(fields, g.convertType(attr.Type.Value))
-// 		}
-// 	}
-
-// 	classType := types.NewStruct(fields...)
-// 	g.classes[class.Name.Value] = classType
-// }
-
 func (g *Generator) createClassType(class *ast.Class) {
-	// Create struct type for class attributes
-	fields := make([]types.Type, 0)
+	// Record inheritance relationship
+	if class.Parent != nil {
+		g.classInheritance[class.Name.Value] = class.Parent.Value
+	} else {
+		g.classInheritance[class.Name.Value] = "Object"
+	}
 
-	// Add vtable pointer as first field
+	// Get parent fields first
+	fields := make([]types.Type, 0)
+	fieldNames := make([]string, 0)
+
+	// Start with vtable pointer
 	fields = append(fields, types.NewPointer(types.I8))
 
-	// Initialize symbol table for this class if not exists
-	g.initializeSymbolTable(class.Name.Value)
-
-	// Add fields for class attributes and store their indices
-	for idx, feature := range class.Features {
-		if attr, ok := feature.(*ast.Attribute); ok {
-			fields = append(fields, g.convertType(attr.Type.Value))
-			// Store field index for later use in assignments
-			g.addSymbol(class.Name.Value, attr.Name.Value, constant.NewInt(types.I32, int64(idx+1)))
+	// Add parent class fields if any
+	if parentName, exists := g.classInheritance[class.Name.Value]; exists && parentName != "Object" {
+		if parentFields, ok := g.classFields[parentName]; ok {
+			for _, fieldName := range parentFields {
+				if _, exists := g.getSymbol(parentName, fieldName); exists {
+					fields = append(fields, g.convertType(fieldName))
+					fieldNames = append(fieldNames, fieldName)
+				}
+			}
 		}
 	}
+
+	// Initialize symbol table for this class
+	g.initializeSymbolTable(class.Name.Value)
+
+	// Add this class's fields
+	for _, feature := range class.Features {
+		if attr, ok := feature.(*ast.Attribute); ok {
+			fields = append(fields, g.convertType(attr.Type.Value))
+			fieldNames = append(fieldNames, attr.Name.Value)
+			// Store field index for later use in assignments
+			g.addSymbol(class.Name.Value, attr.Name.Value,
+				constant.NewInt(types.I32, int64(len(fields)-1)))
+		}
+	}
+
+	// Store field names for inheritance
+	g.classFields[class.Name.Value] = fieldNames
 
 	classType := types.NewStruct(fields...)
 	g.classes[class.Name.Value] = classType
@@ -346,32 +357,31 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		return g.currentBlock.NewCall(method, args...)
 
 	case *ast.StaticDispatchExpression:
-		// Generate code for the object
 		receiver := g.generateExpression(e.Object)
 		if receiver == nil {
 			fmt.Printf("Error: Receiver is nil for static dispatch\n")
 			return constant.NewNull(types.NewPointer(types.I8))
 		}
 
-		// Get the method name by combining class name with method name
-		// For example: Animal_say_hello
-		methodName := ""
+		// Get receiver's class name
+		var className string
 		if recvType, ok := receiver.Type().(*types.PointerType); ok {
 			if structType, ok := recvType.ElemType.(*types.StructType); ok {
-				className := g.getClassNameFromType(structType)
-				methodName = fmt.Sprintf("%s_%s", className, e.Method.Value)
+				className = g.getClassNameFromType(structType)
 			}
 		}
 
-		// Look up the method
-		method := g.getFunction(methodName)
-		if method == nil {
-			fmt.Printf("Error: Method %s not found\n", methodName)
+		// Find method through inheritance chain
+		methodName, found := g.findMethodInHierarchy(className, e.Method.Value)
+		if !found {
+			fmt.Printf("Error: Method %s not found in class hierarchy of %s\n",
+				e.Method.Value, className)
 			return constant.NewNull(types.NewPointer(types.I8))
 		}
 
-		// Generate code for arguments
-		args := []value.Value{receiver} // First argument is always the receiver
+		// Get method and generate call
+		method := g.getFunction(methodName)
+		args := []value.Value{receiver}
 		for _, arg := range e.Arguments {
 			argValue := g.generateExpression(arg)
 			if argValue != nil {
@@ -379,7 +389,6 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 			}
 		}
 
-		// Generate the method call
 		return g.currentBlock.NewCall(method, args...)
 
 	default:
@@ -827,4 +836,23 @@ func (g *Generator) getClassNameFromType(structType *types.StructType) string {
 		}
 	}
 	return "Object" // default to Object if not found
+}
+
+func (g *Generator) findMethodInHierarchy(className, methodName string) (string, bool) {
+	current := className
+	for {
+		// Try to find method in current class
+		methodFullName := fmt.Sprintf("%s_%s", current, methodName)
+		if method := g.getFunction(methodFullName); method != nil {
+			return methodFullName, true
+		}
+
+		// Move up inheritance chain
+		parent, exists := g.classInheritance[current]
+		if !exists || parent == "Object" {
+			break
+		}
+		current = parent
+	}
+	return "", false
 }
