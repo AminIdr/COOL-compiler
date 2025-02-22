@@ -15,10 +15,12 @@ type Generator struct {
 	module           *ir.Module
 	classes          map[string]types.Type
 	currentFunc      *ir.Func
+	currentBlock     *ir.Block
 	currentClassName string
 	symbolTable      map[string]map[string]value.Value
 	ioInstance       value.Value
 	mallocFunc       *ir.Func
+	ifCounter        int
 }
 
 func NewGenerator() *Generator {
@@ -26,6 +28,7 @@ func NewGenerator() *Generator {
 		module:      ir.NewModule(),
 		classes:     make(map[string]types.Type),
 		symbolTable: make(map[string]map[string]value.Value),
+		ifCounter:   0,
 	}
 	return g
 }
@@ -81,7 +84,6 @@ func (g *Generator) generateClassMethods(class *ast.Class) {
 
 func (g *Generator) generateMethod(className string, method *ast.Method) {
 	g.currentClassName = className
-	// Get return type
 	returnType := g.convertType(method.Type.Value)
 
 	// Create function
@@ -103,93 +105,14 @@ func (g *Generator) generateMethod(className string, method *ast.Method) {
 
 	// Generate function body
 	block := fn.NewBlock("")
+	g.currentBlock = block
 	result := g.generateExpression(method.Expression)
 
-	// Convert result type if necessary
-	if types.IsPointer(returnType) {
-		ptrType, ok := returnType.(*types.PointerType)
-		if !ok {
-			ptrType = types.NewPointer(types.I8)
-		}
-		if !types.IsPointer(result.Type()) {
-			block.NewRet(constant.NewNull(ptrType))
-		} else {
-			block.NewRet(result)
-		}
-	} else {
-		// Handle non-pointer types
-		switch t := returnType.(type) {
-		case *types.IntType:
-			if returnType.Equal(result.Type()) {
-				block.NewRet(result)
-			} else {
-				block.NewRet(constant.NewInt(t, 0))
-			}
-		case *types.FloatType:
-			block.NewRet(constant.NewFloat(t, 0.0))
-		default:
-			// Default to i32 if type is unknown
-			block.NewRet(constant.NewInt(types.I32, 0))
-		}
+	// Add return instruction if not already present
+	if g.currentBlock.Term == nil {
+		g.handleReturnValue(result, returnType)
 	}
 }
-
-// func (g *Generator) generateMethod(className string, method *ast.Method) {
-// 	g.currentClassName = className
-// 	returnType := g.convertType(method.Type.Value)
-
-// 	// Create function
-// 	funcName := className + "_" + method.Name.Value
-// 	fn := g.module.NewFunc(funcName, returnType)
-
-// 	// Add self parameter
-// 	selfParam := ir.NewParam("self", types.NewPointer(g.classes[className]))
-// 	fn.Params = append(fn.Params, selfParam)
-
-// 	// Add other parameters
-// 	for _, formal := range method.Formals {
-// 		param := ir.NewParam(formal.Name.Value, g.convertType(formal.Type.Value))
-// 		fn.Params = append(fn.Params, param)
-// 	}
-
-// 	// Store current function
-// 	g.currentFunc = fn
-
-// 	// Create entry block
-// 	entryBlock := fn.NewBlock("entry")
-// 	g.currentFunc.Blocks = append(g.currentFunc.Blocks, entryBlock)
-
-// 	// Generate function body
-// 	result := g.generateExpression(method.Expression)
-
-// 	// Get current block
-// 	currentBlock := g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
-
-// 	// Handle return value
-// 	if result != nil {
-// 		if types.IsPointer(returnType) {
-// 			if !types.IsPointer(result.Type()) {
-// 				currentBlock.NewRet(constant.NewNull(types.NewPointer(types.I8)))
-// 			} else {
-// 				currentBlock.NewRet(result)
-// 			}
-// 		} else {
-// 			// For non-pointer types (like Int)
-// 			if returnType.Equal(result.Type()) {
-// 				currentBlock.NewRet(result)
-// 			} else {
-// 				currentBlock.NewRet(constant.NewInt(types.I32, 0))
-// 			}
-// 		}
-// 	} else {
-// 		// Default return value if result is nil
-// 		if types.IsPointer(returnType) {
-// 			currentBlock.NewRet(constant.NewNull(types.NewPointer(types.I8)))
-// 		} else {
-// 			currentBlock.NewRet(constant.NewInt(types.I32, 0))
-// 		}
-// 	}
-// }
 
 func (g *Generator) convertType(coolType string) types.Type {
 	switch coolType {
@@ -209,6 +132,11 @@ func (g *Generator) convertType(coolType string) types.Type {
 }
 
 func (g *Generator) generateExpression(expr ast.Expression) value.Value {
+	// Store current block
+	if g.currentBlock == nil {
+		g.currentBlock = g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
+	}
+
 	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
 		return constant.NewInt(types.I32, int64(e.Value))
@@ -224,7 +152,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 	case *ast.ObjectIdentifier:
 		// Get the alloca instruction for this variable from symbol table
 		if value, exists := g.getSymbol(g.currentClassName, e.Value); exists {
-			block := g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
+			block := g.currentBlock
 			if alloca, ok := value.(*ir.InstAlloca); ok {
 				return block.NewLoad(alloca.ElemType, alloca)
 			}
@@ -256,8 +184,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		}
 
 		// Create call instruction
-		block := g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
-		return block.NewCall(function, args...)
+		return g.currentBlock.NewCall(function, args...)
 
 	case *ast.BlockExpression:
 		var lastValue value.Value
@@ -268,7 +195,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		return lastValue // Return the value of the last expression
 
 	case *ast.Assignment:
-		block := g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
+		currBlock := g.currentBlock
 		self := g.currentFunc.Params[0]
 
 		// Get the index of the attribute from symbol table
@@ -281,12 +208,12 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		value := g.generateExpression(e.Expression)
 
 		// Generate pointer to the field
-		fieldPtr := block.NewGetElementPtr(g.classes[g.currentClassName], self,
+		fieldPtr := currBlock.NewGetElementPtr(g.classes[g.currentClassName], self,
 			constant.NewInt(types.I32, 0),
 			fieldIndex)
 
 		// Store the value directly since we're already working with heap memory
-		block.NewStore(value, fieldPtr)
+		currBlock.NewStore(value, fieldPtr)
 		return value
 
 	case *ast.LetExpression:
@@ -301,7 +228,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 }
 
 func (g *Generator) generateLetExpression(expr *ast.LetExpression) value.Value {
-	block := g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
+	block := g.currentBlock
 
 	// For each binding in the let expression
 	for _, binding := range expr.Bindings {
@@ -337,7 +264,7 @@ func (g *Generator) createStringConstant(value string) value.Value {
 func (g *Generator) generateBinaryExpression(expr *ast.BinaryExpression) value.Value {
 	left := g.generateExpression(expr.Left)
 	right := g.generateExpression(expr.Right)
-	block := g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1] // Get current block
+	block := g.currentBlock
 
 	switch expr.Operator {
 	case "+":
@@ -349,14 +276,27 @@ func (g *Generator) generateBinaryExpression(expr *ast.BinaryExpression) value.V
 	case "/":
 		return block.NewSDiv(left, right)
 	case "=":
+		// Handle different types of equality comparisons
 		if left.Type().Equal(types.I32) {
 			return block.NewICmp(enum.IPredEQ, left, right)
+		} else if types.IsPointer(left.Type()) {
+			// For pointer types, ensure right is also a pointer
+			if types.IsPointer(right.Type()) {
+				return block.NewICmp(enum.IPredEQ, left, right)
+			}
+			// If comparing pointer with integer (likely 0/null)
+			if right.Type().Equal(types.I32) {
+				// Cast left.Type() to *types.PointerType and create null pointer
+				if ptrType, ok := left.Type().(*types.PointerType); ok {
+					nullPtr := constant.NewNull(ptrType)
+					return block.NewICmp(enum.IPredEQ, left, nullPtr)
+				}
+			}
 		}
-		// For pointer comparison
-		if types.IsPointer(left.Type()) {
-			return block.NewICmp(enum.IPredEQ, left, right)
-		}
-		return constant.NewInt(types.I1, 0)
+		// Convert other types to i32 for comparison
+		return block.NewICmp(enum.IPredEQ,
+			block.NewPtrToInt(left, types.I32),
+			block.NewPtrToInt(right, types.I32))
 	case "<":
 		return block.NewICmp(enum.IPredSLT, left, right)
 	case "<=":
@@ -555,47 +495,62 @@ func (g *Generator) getIOInstance() value.Value {
 	return g.ioInstance
 }
 
-func (g *Generator) generateIfExpression(expr *ast.IfExpression) value.Value {
-	// Get current function
-	fn := g.currentFunc
-
-	// Create blocks with descriptive names
-	thenBlock := fn.NewBlock("if.then")
-	elseBlock := fn.NewBlock("if.else")
-	mergeBlock := fn.NewBlock("if.merge")
-
-	// Get current block
-	currentBlock := fn.Blocks[len(fn.Blocks)-1]
-
-	// Generate condition
-	condVal := g.generateExpression(expr.Condition)
-	var isTrue value.Value
-	if condVal.Type().Equal(types.I1) {
-		isTrue = condVal
+func (g *Generator) handleReturnValue(result value.Value, returnType types.Type) {
+	if types.IsPointer(returnType) {
+		if !types.IsPointer(result.Type()) {
+			g.currentBlock.NewRet(constant.NewNull(types.NewPointer(types.I8)))
+		} else {
+			g.currentBlock.NewRet(result)
+		}
 	} else {
-		isTrue = currentBlock.NewICmp(enum.IPredNE, condVal, constant.NewInt(types.I32, 0))
+		if returnType.Equal(result.Type()) {
+			g.currentBlock.NewRet(result)
+		} else {
+			g.currentBlock.NewRet(constant.NewInt(types.I32, 0))
+		}
+	}
+}
+func (g *Generator) generateIfExpression(expr *ast.IfExpression) value.Value {
+	// Increment counter for unique block names
+	g.ifCounter++
+	currentIf := g.ifCounter
+
+	// Generate condition and blocks with unique names
+	condition := g.generateExpression(expr.Condition)
+	thenBlock := g.currentFunc.NewBlock(fmt.Sprintf("if.then.%d", currentIf))
+	elseBlock := g.currentFunc.NewBlock(fmt.Sprintf("if.else.%d", currentIf))
+	mergeBlock := g.currentFunc.NewBlock(fmt.Sprintf("if.merge.%d", currentIf))
+
+	// Setup condition branching
+	var condValue value.Value
+	if !condition.Type().Equal(types.I1) {
+		zero := constant.NewInt(types.I32, 0)
+		condValue = g.currentBlock.NewICmp(enum.IPredNE, condition, zero)
+	} else {
+		condValue = condition
+	}
+	g.currentBlock.NewCondBr(condValue, thenBlock, elseBlock)
+
+	// Generate then block
+	g.currentBlock = thenBlock
+	thenValue := g.generateExpression(expr.Consequence)
+	if g.currentBlock.Term == nil {
+		g.currentBlock.NewBr(mergeBlock)
 	}
 
-	// Create conditional branch
-	currentBlock.NewCondBr(isTrue, thenBlock, elseBlock)
-
-	// Generate 'then' block
-	thenVal := g.generateExpression(expr.Consequence)
-	// Always create branch to merge block for then path
-	thenBlock.NewBr(mergeBlock)
-
-	// Generate 'else' block
-	elseVal := g.generateExpression(expr.Alternative)
-	// Always create branch to merge block for else path
-	elseBlock.NewBr(mergeBlock)
-
-	// Create PHI node if needed
-	if thenVal != nil && elseVal != nil && thenVal.Type().Equal(elseVal.Type()) {
-		phi := mergeBlock.NewPhi(
-			&ir.Incoming{X: thenVal, Pred: thenBlock},
-			&ir.Incoming{X: elseVal, Pred: elseBlock})
-		return phi
+	// Generate else block
+	g.currentBlock = elseBlock
+	elseValue := g.generateExpression(expr.Alternative)
+	if g.currentBlock.Term == nil {
+		g.currentBlock.NewBr(mergeBlock)
 	}
 
-	return constant.NewInt(types.I32, 0)
+	// Merge block with PHI node
+	g.currentBlock = mergeBlock
+	phi := mergeBlock.NewPhi(
+		ir.NewIncoming(thenValue, thenBlock),
+		ir.NewIncoming(elseValue, elseBlock),
+	)
+
+	return phi
 }

@@ -1,0 +1,38 @@
+		// Generate condition
+		cond, currentBlock, err := g.generateExpression(block, e.Condition)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Convert condition to i1 if necessary
+		if cond.Type() != types.I1 {
+			cond = currentBlock.NewICmp(enum.IPredNE, cond, constant.NewInt(types.I32, 0))
+		}
+
+		// Create blocks
+		thenBlock := currentBlock.Parent.NewBlock("if.then")
+		elseBlock := currentBlock.Parent.NewBlock("if.else")
+		mergeBlock := currentBlock.Parent.NewBlock("if.merge")
+
+		// Branch based on condition
+		currentBlock.NewCondBr(cond, thenBlock, elseBlock)
+
+		// Generate then branch
+		thenVal, thenCurrentBlock, err := g.generateExpression(thenBlock, e.Consequence)
+		if err != nil {
+			return nil, nil, err
+		}
+		thenCurrentBlock.NewBr(mergeBlock)
+
+		// Generate else branch
+		elseVal, elseCurrentBlock, err := g.generateExpression(elseBlock, e.Alternative)
+		if err != nil {
+			return nil, nil, err
+		}
+		elseCurrentBlock.NewBr(mergeBlock)
+
+		// Create phi node in merge block
+		phi := mergeBlock.NewPhi(ir.NewIncoming(thenVal, thenBlock), ir.NewIncoming(elseVal, elseBlock))
+
+		// Return the phi value and the merge block as the current block
+		return phi, mergeBlock, nil

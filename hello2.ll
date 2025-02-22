@@ -4,13 +4,9 @@
 @str.3 = constant [4 x i8] c"%*c\00"
 @str.4 = constant [3 x i8] c"%d\00"
 @io_instance = global { i8* } zeroinitializer
-@str.6 = constant [8 x i8] c"3 < 2: \00"
-@str.7 = constant [5 x i8] c"True\00"
-@str.8 = constant [6 x i8] c"False\00"
-@str.9 = constant [9 x i8] c"\0A4 < 5: \00"
-@str.10 = constant [5 x i8] c"True\00"
-@str.11 = constant [6 x i8] c"False\00"
-@str.12 = constant [11 x i8] c"\0AI am here\00"
+@str.6 = constant [36 x i8] c"Welcome, I expect 3!\0AThe value is: \00"
+@str.7 = constant [2 x i8] c"3\00"
+@str.8 = constant [2 x i8] c"5\00"
 @main_instance = global { i8* } zeroinitializer
 
 declare i32 @printf(i8* %format, ...)
@@ -56,36 +52,21 @@ define i32 @IO_in_int({ i8* }* %self) {
 
 define i8* @Main_main({ i8* }* %self) {
 0:
-	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [8 x i8]* @str.6)
+	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [36 x i8]* @str.6)
 	%2 = icmp slt i32 3, 2
-	br i1 %2, label %if.then.1, label %if.else.1
+	ret { i8* }* %5
 
-if.then.1:
-	%3 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.7)
-	br label %if.merge.1
+if.then2:
+	%3 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [2 x i8]* @str.7)
+	br label %if.merge
 
-if.else.1:
-	%4 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [6 x i8]* @str.8)
-	br label %if.merge.1
+if.else:
+	%4 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [2 x i8]* @str.8)
+	br label %if.merge
 
-if.merge.1:
-	%5 = phi { i8* }* [ %3, %if.then.1 ], [ %4, %if.else.1 ]
-	%6 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [9 x i8]* @str.9)
-	%7 = icmp slt i32 4, 5
-	br i1 %7, label %if.then.2, label %if.else.2
-
-if.then.2:
-	%8 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.10)
-	br label %if.merge.2
-
-if.else.2:
-	%9 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [6 x i8]* @str.11)
-	br label %if.merge.2
-
-if.merge.2:
-	%10 = phi { i8* }* [ %8, %if.then.2 ], [ %9, %if.else.2 ]
-	%11 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [11 x i8]* @str.12)
-	ret { i8* }* %11
+if.merge:
+	%5 = phi { i8* }* [ %3, %if.then2 ], [ %4, %if.else ]
+	ret { i8* }* %5
 }
 
 define i32 @main() {
