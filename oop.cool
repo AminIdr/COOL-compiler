@@ -1,0 +1,17 @@
+class Animal {
+    say_hello() : String {
+        {
+            out_string("I am an animal");
+            out_string("Parent Class");
+        }
+    };
+};
+
+class Main {
+    main(): Object {
+        {
+        out_string("Hi");
+        let x:Animal <- new Animal in {x.say_hello();};
+        }
+    };
+};

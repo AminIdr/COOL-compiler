@@ -34,6 +34,7 @@ const (
 	NEW
 	OF
 	NOT
+	SELF_TYPE // IDR
 
 	// Data types
 	STR_CONST
@@ -69,7 +70,7 @@ const (
 func (tt TokenType) String() string {
 	return [...]string{"EOF", "ERROR", "CLASS", "INHERITS", "ISVOID", "IF", "ELSE", "FI", "THEN", "LET", "IN", "WHILE", "CASE", "ESCA", "LOOP", "POOL",
 		"NEW", "OF", "NOT", "STR_CONST", "BOOL_CONST", "INT_CONST", "TYPEID", "OBJECTID", "ASSIGN", "DARROW", "LT", "LE", "EQ", "PLUS", "MINUS", "TIMES",
-		"DIVIDE", "LPAREN", "RPAREN", "LBRACE", "RBRACE", "SEMI", "COLON", "COMMA", "DOT", "AT", "NEG"}[tt]
+		"DIVIDE", "LPAREN", "RPAREN", "LBRACE", "RBRACE", "SEMI", "COLON", "COMMA", "DOT", "AT", "NEG", "SELF_TYPE"}[tt] // IDR
 }
 
 // Token represents a lexical token with its type, value, and position.
@@ -359,9 +360,11 @@ func (l *Lexer) NextToken() Token {
 			tok.Type = NEW
 		case "not":
 			tok.Type = NOT
-		// Handle boolean const
 		case "true", "false":
 			tok.Type = BOOL_CONST
+		// IDR
+		case "self_type":
+			tok.Type = SELF_TYPE
 		default:
 			if unicode.IsUpper(rune(identifier[0])) {
 				// Types are all starting with an upper case.

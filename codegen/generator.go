@@ -21,14 +21,16 @@ type Generator struct {
 	ioInstance       value.Value
 	mallocFunc       *ir.Func
 	ifCounter        int
+	whileCounter     int
 }
 
 func NewGenerator() *Generator {
 	g := &Generator{
-		module:      ir.NewModule(),
-		classes:     make(map[string]types.Type),
-		symbolTable: make(map[string]map[string]value.Value),
-		ifCounter:   0,
+		module:       ir.NewModule(),
+		classes:      make(map[string]types.Type),
+		symbolTable:  make(map[string]map[string]value.Value),
+		ifCounter:    0,
+		whileCounter: 0,
 	}
 	return g
 }
@@ -132,6 +134,9 @@ func (g *Generator) convertType(coolType string) types.Type {
 }
 
 func (g *Generator) generateExpression(expr ast.Expression) value.Value {
+	// Add debug print at the start
+	fmt.Printf("Expression type: %T\n", expr)
+
 	// Store current block
 	if g.currentBlock == nil {
 		g.currentBlock = g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
@@ -154,12 +159,17 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		if value, exists := g.getSymbol(g.currentClassName, e.Value); exists {
 			block := g.currentBlock
 			if alloca, ok := value.(*ir.InstAlloca); ok {
+				// Always load from alloca when reading the variable
 				return block.NewLoad(alloca.ElemType, alloca)
 			} else if constInt, ok := value.(*constant.Int); ok {
-				// Handle integer constants (like function parameters)
 				return constInt
 			}
-			return value
+			// For class fields, need to load from the field pointer
+			self := g.currentFunc.Params[0]
+			fieldPtr := block.NewGetElementPtr(g.classes[g.currentClassName], self,
+				constant.NewInt(types.I32, 0),
+				value) // value here is the field index
+			return block.NewLoad(g.convertType(e.Value), fieldPtr)
 		}
 		// If not found in symbol table, check if it's a parameter
 		for _, param := range g.currentFunc.Params {
@@ -170,6 +180,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		fmt.Printf("Warning: Object identifier '%s' not found\n", e.Value)
 		// Return a default integer value instead of null
 		return constant.NewInt(types.I32, 0)
+
 	case *ast.CallExpression:
 		// Get function to call
 		funcName := ""
@@ -218,32 +229,158 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		return lastValue // Return the value of the last expression
 
 	case *ast.Assignment:
+		fmt.Println("Entering Assignment case")
 		currBlock := g.currentBlock
-		self := g.currentFunc.Params[0]
 
-		// Get the index of the attribute from symbol table
-		fieldIndex, exists := g.getSymbol(g.currentClassName, e.Name)
-		if !exists {
-			return constant.NewNull(types.NewPointer(types.I8))
-		}
+		// Add debug print for assignment details
+		fmt.Printf("Assignment: %s <- expression\n", e.Name)
 
-		// Generate the value to assign
+		// Generate the value to assign first
 		value := g.generateExpression(e.Expression)
 
-		// Generate pointer to the field
-		fieldPtr := currBlock.NewGetElementPtr(g.classes[g.currentClassName], self,
-			constant.NewInt(types.I32, 0),
-			fieldIndex)
+		// Try to get the variable from symbol table first
+		if varValue, exists := g.getSymbol(g.currentClassName, e.Name); exists {
+			// Check if it's a local variable (alloca instruction)
+			if alloca, ok := varValue.(*ir.InstAlloca); ok {
+				// Store into local variable
+				currBlock.NewStore(value, alloca)
+				// Return the stored value
+				return value
+			}
 
-		// Store the value directly since we're already working with heap memory
-		currBlock.NewStore(value, fieldPtr)
-		return value
+			// If not a local variable, it's a class field
+			self := g.currentFunc.Params[0]
+			fieldPtr := currBlock.NewGetElementPtr(g.classes[g.currentClassName], self,
+				constant.NewInt(types.I32, 0),
+				varValue) // varValue here is the field index
+			// Store the value
+			currBlock.NewStore(value, fieldPtr)
+			return value
+		}
+
+		// If we get here, the variable wasn't found
+		fmt.Printf("Warning: Assignment target '%s' not found\n", e.Name)
+		return constant.NewNull(types.NewPointer(types.I8))
 
 	case *ast.LetExpression:
 		return g.generateLetExpression(e)
 
 	case *ast.IfExpression:
 		return g.generateIfExpression(e)
+
+	case *ast.WhileExpression:
+		return g.generateWhileExpression(e)
+
+	case *ast.NewExpression:
+		// Get the class type being instantiated
+		classType, ok := g.classes[e.Type.Value]
+		if !ok {
+			fmt.Printf("Error: Unknown class type %s\n", e.Type.Value)
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Calculate size of the class type
+		structType, ok := classType.(*types.StructType)
+		if !ok {
+			fmt.Printf("Error: Class type %s is not a struct type\n", e.Type.Value)
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Get size in bytes (each field is 8 bytes on 64-bit systems)
+		sizeInBytes := len(structType.Fields) * 8
+		size := constant.NewInt(types.I32, int64(sizeInBytes))
+
+		// Create allocation for the new object
+		malloc := g.currentBlock.NewCall(g.mallocFunc, size)
+
+		// Bitcast malloc result to correct class type pointer
+		instance := g.currentBlock.NewBitCast(malloc, types.NewPointer(classType))
+
+		// Initialize vtable pointer if needed
+		vtablePtr := g.currentBlock.NewGetElementPtr(classType, instance,
+			constant.NewInt(types.I32, 0),
+			constant.NewInt(types.I32, 0))
+		g.currentBlock.NewStore(constant.NewNull(types.NewPointer(types.I8)), vtablePtr)
+
+		// Call constructor/initializer if it exists
+		constructorName := fmt.Sprintf("%s_init", e.Type.Value)
+		if constructor := g.getFunction(constructorName); constructor != nil {
+			g.currentBlock.NewCall(constructor, instance)
+		}
+
+		return instance
+
+		// Add to generateExpression switch statement
+	case *ast.DispatchExpression:
+		// Generate code for the object
+		receiver := g.generateExpression(e.Object)
+
+		// Determine class type of receiver
+		var className string
+		if ptrType, ok := receiver.Type().(*types.PointerType); ok {
+			if structType, ok := ptrType.ElemType.(*types.StructType); ok {
+				// Get class name from type - you'll need to maintain a reverse mapping
+				// from LLVM types to class names
+				className = g.getClassNameFromType(structType)
+			}
+		}
+
+		// Get the method name
+		methodName := fmt.Sprintf("%s_%s", className, e.Method.Value)
+
+		// Look up the method
+		method := g.getFunction(methodName)
+		if method == nil {
+			fmt.Printf("Error: Method %s not found in class %s\n", e.Method.Value, className)
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Generate code for arguments
+		args := []value.Value{receiver} // First argument is always 'self'
+		for _, arg := range e.Arguments {
+			argValue := g.generateExpression(arg)
+			args = append(args, argValue)
+		}
+
+		// Generate the method call
+		return g.currentBlock.NewCall(method, args...)
+
+	case *ast.StaticDispatchExpression:
+		// Generate code for the object
+		receiver := g.generateExpression(e.Object)
+		if receiver == nil {
+			fmt.Printf("Error: Receiver is nil for static dispatch\n")
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Get the method name by combining class name with method name
+		// For example: Animal_say_hello
+		methodName := ""
+		if recvType, ok := receiver.Type().(*types.PointerType); ok {
+			if structType, ok := recvType.ElemType.(*types.StructType); ok {
+				className := g.getClassNameFromType(structType)
+				methodName = fmt.Sprintf("%s_%s", className, e.Method.Value)
+			}
+		}
+
+		// Look up the method
+		method := g.getFunction(methodName)
+		if method == nil {
+			fmt.Printf("Error: Method %s not found\n", methodName)
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Generate code for arguments
+		args := []value.Value{receiver} // First argument is always the receiver
+		for _, arg := range e.Arguments {
+			argValue := g.generateExpression(arg)
+			if argValue != nil {
+				args = append(args, argValue)
+			}
+		}
+
+		// Generate the method call
+		return g.currentBlock.NewCall(method, args...)
 
 	default:
 		return constant.NewInt(types.I32, 0)
@@ -298,7 +435,10 @@ func (g *Generator) generateBinaryExpression(expr *ast.BinaryExpression) value.V
 
 	switch expr.Operator {
 	case "+":
-		return block.NewAdd(left, right)
+		result := block.NewAdd(left, right)
+		// If this is part of an assignment (i <- i + 1),
+		// the Assignment case will handle storing the result
+		return result
 	case "-":
 		if types.IsPointer(left.Type()) {
 			// If left is pointer and right is integer, scale the integer
@@ -632,4 +772,59 @@ func (g *Generator) generateIfExpression(expr *ast.IfExpression) value.Value {
 	)
 
 	return phi
+}
+
+func (g *Generator) generateWhileExpression(expr *ast.WhileExpression) value.Value {
+	// Increment counter for unique block names
+	g.whileCounter++
+	currentWhile := g.whileCounter
+
+	// Create blocks for loop with unique names
+	condBlock := g.currentFunc.NewBlock(fmt.Sprintf("while.cond.%d", currentWhile))
+	bodyBlock := g.currentFunc.NewBlock(fmt.Sprintf("while.body.%d", currentWhile))
+	afterBlock := g.currentFunc.NewBlock(fmt.Sprintf("while.after.%d", currentWhile))
+
+	// Branch from current block to condition block
+	g.currentBlock.NewBr(condBlock)
+
+	// Generate condition code
+	g.currentBlock = condBlock
+	condition := g.generateExpression(expr.Condition)
+
+	// Convert condition to boolean if needed
+	var condValue value.Value
+	if !condition.Type().Equal(types.I1) {
+		zero := constant.NewInt(types.I32, 0)
+		condValue = g.currentBlock.NewICmp(enum.IPredNE, condition, zero)
+	} else {
+		condValue = condition
+	}
+
+	// Conditional branch based on condition
+	g.currentBlock.NewCondBr(condValue, bodyBlock, afterBlock)
+
+	// Generate body code
+	g.currentBlock = bodyBlock
+	g.generateExpression(expr.Body)
+
+	// Jump back to condition block at end of body
+	if g.currentBlock.Term == nil {
+		g.currentBlock.NewBr(condBlock)
+	}
+
+	// Set current block to after block
+	g.currentBlock = afterBlock
+
+	// Return zero since while expressions return void in COOL
+	return constant.NewInt(types.I32, 0)
+}
+
+func (g *Generator) getClassNameFromType(structType *types.StructType) string {
+	// Iterate through class map to find matching type
+	for className, classType := range g.classes {
+		if classType == structType {
+			return className
+		}
+	}
+	return "Object" // default to Object if not found
 }

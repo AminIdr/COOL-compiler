@@ -2,6 +2,7 @@ package ast
 
 import (
 	"cool-compiler/lexer"
+	"fmt"
 )
 
 type Node interface {
@@ -246,6 +247,11 @@ type Assignment struct {
 func (a *Assignment) expressionNode()      {}
 func (a *Assignment) TokenLiteral() string { return a.Token.Literal }
 
+// Add this method to the Assignment struct
+func (a *Assignment) String() string {
+	return fmt.Sprintf("Assignment{Name: %s}", a.Name)
+}
+
 // CallExpression represents a method call in the AST
 type CallExpression struct {
 	Token     lexer.Token  // The '(' token
@@ -255,3 +261,25 @@ type CallExpression struct {
 
 func (ce *CallExpression) expressionNode()      {}
 func (ce *CallExpression) TokenLiteral() string { return ce.Token.Literal }
+
+// DispatchExpression represents a method dispatch in the AST
+type DispatchExpression struct {
+	Token     lexer.Token       // The '.' token
+	Object    Expression        // The object on which the method is called
+	Method    *ObjectIdentifier // The method being called
+	Arguments []Expression      // The arguments passed to the method
+}
+
+func (de *DispatchExpression) expressionNode()      {}
+func (de *DispatchExpression) TokenLiteral() string { return de.Token.Literal }
+
+// StaticDispatchExpression represents a method dispatch in the AST (e.g., obj.method())
+type StaticDispatchExpression struct {
+	Token     lexer.Token       // The '.' token
+	Object    Expression        // The object on which the method is called
+	Method    *ObjectIdentifier // The method being called
+	Arguments []Expression      // The arguments passed to the method
+}
+
+func (de *StaticDispatchExpression) expressionNode()      {}
+func (de *StaticDispatchExpression) TokenLiteral() string { return de.Token.Literal }
