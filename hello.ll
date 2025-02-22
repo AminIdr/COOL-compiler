@@ -4,13 +4,14 @@
 @str.3 = constant [4 x i8] c"%*c\00"
 @str.4 = constant [3 x i8] c"%d\00"
 @io_instance = global { i8* } zeroinitializer
-@str.6 = constant [8 x i8] c"3 < 2: \00"
-@str.7 = constant [5 x i8] c"True\00"
-@str.8 = constant [6 x i8] c"False\00"
-@str.9 = constant [9 x i8] c"\0A4 < 5: \00"
-@str.10 = constant [5 x i8] c"True\00"
-@str.11 = constant [6 x i8] c"False\00"
-@str.12 = constant [11 x i8] c"\0AI am here\00"
+@str.6 = constant [13 x i8] c"Hello World!\00"
+@str.7 = constant [8 x i8] c"3 < 2: \00"
+@str.8 = constant [5 x i8] c"True\00"
+@str.9 = constant [6 x i8] c"False\00"
+@str.10 = constant [9 x i8] c"\0A4 < 5: \00"
+@str.11 = constant [5 x i8] c"True\00"
+@str.12 = constant [6 x i8] c"False\00"
+@str.13 = constant [11 x i8] c"\0AI am here\00"
 @main_instance = global { i8* } zeroinitializer
 
 declare i32 @printf(i8* %format, ...)
@@ -54,38 +55,45 @@ define i32 @IO_in_int({ i8* }* %self) {
 	ret i32 %3
 }
 
+define i8* @Main_hello({ i8* }* %self) {
+0:
+	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [13 x i8]* @str.6)
+	ret { i8* }* %1
+}
+
 define i8* @Main_main({ i8* }* %self) {
 0:
-	%1 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [8 x i8]* @str.6)
-	%2 = icmp slt i32 3, 2
-	br i1 %2, label %if.then.1, label %if.else.1
+	%1 = call i8* @Main_hello({ i8* }* %self)
+	%2 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [8 x i8]* @str.7)
+	%3 = icmp slt i32 3, 2
+	br i1 %3, label %if.then.1, label %if.else.1
 
 if.then.1:
-	%3 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.7)
+	%4 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.8)
 	br label %if.merge.1
 
 if.else.1:
-	%4 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [6 x i8]* @str.8)
+	%5 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [6 x i8]* @str.9)
 	br label %if.merge.1
 
 if.merge.1:
-	%5 = phi { i8* }* [ %3, %if.then.1 ], [ %4, %if.else.1 ]
-	%6 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [9 x i8]* @str.9)
-	%7 = icmp slt i32 4, 5
-	br i1 %7, label %if.then.2, label %if.else.2
+	%6 = phi { i8* }* [ %4, %if.then.1 ], [ %5, %if.else.1 ]
+	%7 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [9 x i8]* @str.10)
+	%8 = icmp slt i32 4, 5
+	br i1 %8, label %if.then.2, label %if.else.2
 
 if.then.2:
-	%8 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.10)
+	%9 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [5 x i8]* @str.11)
 	br label %if.merge.2
 
 if.else.2:
-	%9 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [6 x i8]* @str.11)
+	%10 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [6 x i8]* @str.12)
 	br label %if.merge.2
 
 if.merge.2:
-	%10 = phi { i8* }* [ %8, %if.then.2 ], [ %9, %if.else.2 ]
-	%11 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [11 x i8]* @str.12)
-	ret { i8* }* %11
+	%11 = phi { i8* }* [ %9, %if.then.2 ], [ %10, %if.else.2 ]
+	%12 = call { i8* }* @IO_out_string({ i8* }* @io_instance, [11 x i8]* @str.13)
+	ret { i8* }* %12
 }
 
 define i32 @main() {

@@ -155,16 +155,39 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 			block := g.currentBlock
 			if alloca, ok := value.(*ir.InstAlloca); ok {
 				return block.NewLoad(alloca.ElemType, alloca)
+			} else if constInt, ok := value.(*constant.Int); ok {
+				// Handle integer constants (like function parameters)
+				return constInt
 			}
 			return value
 		}
-		return constant.NewNull(types.NewPointer(types.I8))
-
+		// If not found in symbol table, check if it's a parameter
+		for _, param := range g.currentFunc.Params {
+			if param.Name() == e.Value {
+				return param
+			}
+		}
+		fmt.Printf("Warning: Object identifier '%s' not found\n", e.Value)
+		// Return a default integer value instead of null
+		return constant.NewInt(types.I32, 0)
 	case *ast.CallExpression:
 		// Get function to call
 		funcName := ""
+		var receiver value.Value
+
+		// Handle method calls on objects or self
 		if objId, ok := e.Function.(*ast.ObjectIdentifier); ok {
-			funcName = "IO_" + objId.Value
+			if objId.Value == "out_string" || objId.Value == "out_int" ||
+				objId.Value == "in_string" || objId.Value == "in_int" {
+				// IO methods
+				funcName = "IO_" + objId.Value
+				receiver = g.getIOInstance()
+			} else {
+				// Regular method calls
+				funcName = g.currentClassName + "_" + objId.Value
+				// Use self parameter for method calls
+				receiver = g.currentFunc.Params[0]
+			}
 		}
 
 		function := g.getFunction(funcName)
@@ -173,14 +196,14 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		}
 
 		// Generate arguments
-		args := []value.Value{}
-
-		// Use the shared IO instance
-		args = append(args, g.getIOInstance())
+		args := []value.Value{receiver} // Start with receiver (self/IO instance)
 
 		// Generate argument expressions
 		for _, arg := range e.Arguments {
-			args = append(args, g.generateExpression(arg))
+			argValue := g.generateExpression(arg)
+			if argValue != nil {
+				args = append(args, argValue)
+			}
 		}
 
 		// Create call instruction
@@ -265,14 +288,70 @@ func (g *Generator) generateBinaryExpression(expr *ast.BinaryExpression) value.V
 	left := g.generateExpression(expr.Left)
 	right := g.generateExpression(expr.Right)
 	block := g.currentBlock
+	// Convert pointers to integers for arithmetic operations
+	if types.IsPointer(left.Type()) {
+		left = block.NewPtrToInt(left, types.I32)
+	}
+	if types.IsPointer(right.Type()) {
+		right = block.NewPtrToInt(right, types.I32)
+	}
 
 	switch expr.Operator {
 	case "+":
 		return block.NewAdd(left, right)
 	case "-":
+		if types.IsPointer(left.Type()) {
+			// If left is pointer and right is integer, scale the integer
+			if right.Type().Equal(types.I32) {
+				return block.NewIntToPtr(
+					block.NewSub(
+						block.NewPtrToInt(left, types.I32),
+						right,
+					),
+					left.Type(),
+				)
+			}
+		} else if types.IsPointer(right.Type()) {
+			// If right is pointer and left is integer, scale the integer
+			if left.Type().Equal(types.I32) {
+				return block.NewIntToPtr(
+					block.NewSub(
+						left,
+						block.NewPtrToInt(right, types.I32),
+					),
+					right.Type(),
+				)
+			}
+		}
+		// Default case for non-pointer subtraction
 		return block.NewSub(left, right)
 	case "*":
+		if types.IsPointer(left.Type()) {
+			// If left is pointer and right is integer, scale the integer
+			if right.Type().Equal(types.I32) {
+				return block.NewIntToPtr(
+					block.NewMul(
+						block.NewPtrToInt(left, types.I32),
+						right,
+					),
+					left.Type(),
+				)
+			}
+		} else if types.IsPointer(right.Type()) {
+			// If right is pointer and left is integer, scale the integer
+			if left.Type().Equal(types.I32) {
+				return block.NewIntToPtr(
+					block.NewMul(
+						left,
+						block.NewPtrToInt(right, types.I32),
+					),
+					right.Type(),
+				)
+			}
+		}
+		// Default case for non-pointer multiplication
 		return block.NewMul(left, right)
+
 	case "/":
 		return block.NewSDiv(left, right)
 	case "=":
@@ -320,11 +399,11 @@ func (g *Generator) addSymbol(className, name string, value value.Value) {
 func (g *Generator) getSymbol(className, name string) (value.Value, bool) {
 	if table, ok := g.symbolTable[className]; ok {
 		if val, exists := table[name]; exists {
-			fmt.Printf("Found symbol %s in class %s\n", name, className)
+			// fmt.Printf("Found symbol %s in class %s\n", name, className)
 			return val, true
 		}
 	}
-	fmt.Printf("Symbol %s not found in class %s\n", name, className)
+	// fmt.Printf("Symbol %s not found in class %s\n", name, className)
 
 	return nil, false
 }

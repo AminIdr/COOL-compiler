@@ -1,6 +1,10 @@
 class Main {
+  hello(): Object {
+    out_string("Hello World!\n")
+  };
   main() : Object { 
     {
+      hello();
       out_string("3 < 2: ");
       if 3 < 2 then out_string("True") else out_string("False") fi;
       out_string("\n4 < 5: ");

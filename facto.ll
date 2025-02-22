@@ -49,28 +49,35 @@ define i32 @IO_in_int({ i8* }* %self) {
 
 define i32 @Main_factorial({ i8* }* %self, i32 %n) {
 0:
-    %1 = icmp eq i32 %n, 0
-    br i1 %1, label %if.then.1, label %if.else.1
+	%1 = icmp eq i32 %n, 0
+	br i1 %1, label %if.then.1, label %if.else.1
 
 if.then.1:
-    br label %if.merge.1
+	br label %if.merge.1
 
 if.else.1:
-    %2 = sub i32 %n, 1
-    %3 = call i32 @Main_factorial({ i8* }* %self, i32 %2)
-    %4 = mul i32 %n, %3
-    br label %if.merge.1
+	%2 = sub i32 %n, 1
+	%3 = call i32 @Main_factorial({ i8* }* %self, i32 %2)
+	%4 = mul i32 %n, %3
+	br label %if.merge.1
 
 if.merge.1:
-    %5 = phi i32 [ 1, %if.then.1 ], [ %4, %if.else.1 ]
-    ret i32 %5
+	%5 = phi i32 [ 1, %if.then.1 ], [ %4, %if.else.1 ]
+	ret i32 %5
+}
+
+define i8* @Main_main({ i8* }* %self) {
+0:
+	%1 = alloca i32
+	store i32 55, i32* %1
+	%2 = load i32, i32* %1
+	%3 = call i32 @Main_factorial({ i8* }* %self, i32 %2)
+	%4 = call { i8* }* @IO_out_int({ i8* }* @io_instance, i32 %3)
+	ret { i8* }* %4
 }
 
 define i32 @main() {
 0:
-    ; Calculate factorial of 5 as an example
-    %1 = call i32 @Main_factorial({ i8* }* @main_instance, i32 5)
-    ; Print the result
-    %2 = call { i8* }* @IO_out_int({ i8* }* @io_instance, i32 %1)
-    ret i32 0
+	%1 = call i8* @Main_main({ i8* }* @main_instance)
+	ret i32 0
 }

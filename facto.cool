@@ -8,7 +8,7 @@ class Main {
     };
     
     main(): Object {
-        let num: Int <- 5 in
+        let num: Int <- 55 in
             out_int(factorial(num))
     };
 };
