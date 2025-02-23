@@ -14,11 +14,20 @@ class Dog inherits Animal {
     };
 };
 
+class Dobermann inherits Dog {
+    say_hello() : String {
+        {
+            out_string("I am a Dobermann\n");
+        }
+    };
+};
+
 class Main {
     main(): Object {
         {
-        out_string("Hi, ");
-        let x:Dog <- new Dog in {x.say_hello();};
+        let x:Animal <- new Animal in {x.say_hello();};
+        let y:Dog <- new Dog in {y.say_hello();};
+        let z:Dobermann <- new Dobermann in {z.say_hello();};
         }
     };
 };

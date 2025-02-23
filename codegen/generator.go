@@ -19,11 +19,13 @@ type Generator struct {
 	currentClassName string
 	symbolTable      map[string]map[string]value.Value
 	ioInstance       value.Value
-	mallocFunc       *ir.Func
 	ifCounter        int
 	whileCounter     int
 	classInheritance map[string]string   // Maps class name to parent class name
 	classFields      map[string][]string // Maps class name to field names in order
+	mallocFunc       *ir.Func
+	exitFunc         *ir.Func
+	typeStrings      map[string]value.Value // Maps class names to their string constants
 }
 
 func NewGenerator() *Generator {
@@ -35,6 +37,7 @@ func NewGenerator() *Generator {
 		whileCounter:     0,
 		classInheritance: make(map[string]string),
 		classFields:      make(map[string][]string),
+		typeStrings:      make(map[string]value.Value),
 	}
 	return g
 }
@@ -42,6 +45,10 @@ func NewGenerator() *Generator {
 func (g *Generator) createClassType(class *ast.Class) {
 	// Record inheritance relationship
 	if class.Parent != nil {
+		// IDR: Diro f semantic
+		if class.Parent.Value == "Int" {
+			panic(fmt.Sprintf("Class %s cannot inherit from Int", class.Name.Value))
+		}
 		g.classInheritance[class.Name.Value] = class.Parent.Value
 	} else {
 		g.classInheritance[class.Name.Value] = "Object"
@@ -145,9 +152,6 @@ func (g *Generator) convertType(coolType string) types.Type {
 }
 
 func (g *Generator) generateExpression(expr ast.Expression) value.Value {
-	// Add debug print at the start
-	fmt.Printf("Expression type: %T\n", expr)
-
 	// Store current block
 	if g.currentBlock == nil {
 		g.currentBlock = g.currentFunc.Blocks[len(g.currentFunc.Blocks)-1]
@@ -199,6 +203,24 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 
 		// Handle method calls on objects or self
 		if objId, ok := e.Function.(*ast.ObjectIdentifier); ok {
+			switch objId.Value {
+			case "abort":
+				abortFunc := g.getFunction("Object_abort")
+				if abortFunc != nil {
+					return g.currentBlock.NewCall(abortFunc, g.currentFunc.Params[0])
+				}
+			case "type_name":
+				typeNameFunc := g.getFunction("Object_type_name")
+				if typeNameFunc != nil {
+					return g.currentBlock.NewCall(typeNameFunc, g.currentFunc.Params[0])
+				}
+			case "copy":
+				copyFunc := g.getFunction("Object_copy")
+				if copyFunc != nil {
+					return g.currentBlock.NewCall(copyFunc, g.currentFunc.Params[0])
+				}
+			}
+
 			if objId.Value == "out_string" || objId.Value == "out_int" ||
 				objId.Value == "in_string" || objId.Value == "in_int" {
 				// IO methods
@@ -307,12 +329,19 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		// Bitcast malloc result to correct class type pointer
 		instance := g.currentBlock.NewBitCast(malloc, types.NewPointer(classType))
 
-		// Initialize vtable pointer if needed
+		// Store class name in vtable
 		vtablePtr := g.currentBlock.NewGetElementPtr(classType, instance,
 			constant.NewInt(types.I32, 0),
 			constant.NewInt(types.I32, 0))
-		g.currentBlock.NewStore(constant.NewNull(types.NewPointer(types.I8)), vtablePtr)
 
+		// Get or create the string constant for this class name
+		typeStr, exists := g.typeStrings[e.Type.Value]
+		if !exists {
+			typeStr = g.createStringConstant(e.Type.Value)
+			g.typeStrings[e.Type.Value] = typeStr
+		}
+		typeStrPtr := g.currentBlock.NewBitCast(typeStr, types.NewPointer(types.I8))
+		g.currentBlock.NewStore(typeStrPtr, vtablePtr)
 		// Call constructor/initializer if it exists
 		constructorName := fmt.Sprintf("%s_init", e.Type.Value)
 		if constructor := g.getFunction(constructorName); constructor != nil {
@@ -660,14 +689,24 @@ func (g *Generator) generateIOMethods() {
 	block.NewRet(loadedValue)
 }
 
-// Modify the Generate method
 func (g *Generator) Generate(program *ast.Program) *ir.Module {
+	if g.mallocFunc == nil {
+		g.mallocFunc = g.module.NewFunc("malloc",
+			types.NewPointer(types.I8),
+			ir.NewParam("size", types.I32))
+	}
+	// Declare exit function globally
+	exitFunc := g.module.NewFunc("exit", types.Void,
+		ir.NewParam("status", types.I32))
+	exitFunc.Linkage = enum.LinkageExternal
+	exitFunc.CallingConv = enum.CallingConvC
+	g.exitFunc = exitFunc
+
+	g.generateObjectClass()
+	g.generateIntClass()
 	// Declare IO functions first
 	g.declareIOFunctions()
 	// Declare required C functions
-	// Declare required C functions once
-	g.mallocFunc = g.module.NewFunc("malloc", types.NewPointer(types.I8),
-		ir.NewParam("size", types.I32))
 	g.module.NewFunc("strlen", types.I32,
 		ir.NewParam("str", types.NewPointer(types.I8)))
 	g.module.NewFunc("strcpy", types.NewPointer(types.I8),
@@ -849,10 +888,103 @@ func (g *Generator) findMethodInHierarchy(className, methodName string) (string,
 
 		// Move up inheritance chain
 		parent, exists := g.classInheritance[current]
-		if !exists || parent == "Object" {
+		if !exists {
+			// Try Object methods as last resort
+			objectMethod := fmt.Sprintf("Object_%s", methodName)
+			if method := g.getFunction(objectMethod); method != nil {
+				return objectMethod, true
+			}
 			break
 		}
 		current = parent
 	}
 	return "", false
+}
+
+func (g *Generator) generateObjectClass() {
+	// Create Object class type with just vtable pointer
+	if g.mallocFunc == nil {
+		g.mallocFunc = g.module.NewFunc("malloc",
+			types.NewPointer(types.I8),
+			ir.NewParam("size", types.I32))
+	}
+
+	// Create Object class type with just vtable pointer
+	objectType := types.NewStruct(types.NewPointer(types.I8))
+	g.classes["Object"] = objectType
+
+	// Generate abort() method
+	abortFunc := g.module.NewFunc("Object_abort", types.NewPointer(g.classes["Object"]))
+	self := ir.NewParam("self", types.NewPointer(g.classes["Object"]))
+	abortFunc.Params = append(abortFunc.Params, self)
+	block := abortFunc.NewBlock("")
+
+	callInst := block.NewCall(g.exitFunc, constant.NewInt(types.I32, 1))
+	fmt.Println("I am here")
+	callInst.Tail = enum.TailTail
+	block.NewUnreachable()
+
+	// Generate type_name() method
+	typeNameFunc := g.module.NewFunc("Object_type_name", types.NewPointer(types.I8))
+	self = ir.NewParam("self", types.NewPointer(g.classes["Object"]))
+	typeNameFunc.Params = append(typeNameFunc.Params, self)
+	block = typeNameFunc.NewBlock("")
+
+	// Get the vtable pointer (first field)
+	vtablePtr := block.NewGetElementPtr(g.classes["Object"], self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+
+	// Load the string pointer from vtable
+	typeName := block.NewLoad(types.NewPointer(types.I8), vtablePtr)
+	block.NewRet(typeName)
+
+	// Generate copy() method
+	copyFunc := g.module.NewFunc("Object_copy", types.NewPointer(g.classes["Object"]))
+	self = ir.NewParam("self", types.NewPointer(g.classes["Object"]))
+	copyFunc.Params = append(copyFunc.Params, self)
+	block = copyFunc.NewBlock("")
+
+	// Allocate new object
+	size := constant.NewInt(types.I32, 8) // size of Object (just vtable pointer)
+	newObj := block.NewCall(g.mallocFunc, size)
+
+	// Copy contents
+	srcCast := block.NewBitCast(self, types.NewPointer(types.I8))
+	dstCast := block.NewBitCast(newObj, types.NewPointer(types.I8))
+	// Copy size bytes from source to destination
+	memcpyFunc := g.module.NewFunc("memcpy",
+		types.NewPointer(types.I8),
+		ir.NewParam("dest", types.NewPointer(types.I8)),
+		ir.NewParam("src", types.NewPointer(types.I8)),
+		ir.NewParam("size", types.I32))
+	block.NewCall(memcpyFunc, dstCast, srcCast, size)
+
+	block.NewRet(block.NewBitCast(newObj, types.NewPointer(g.classes["Object"])))
+}
+
+func (g *Generator) generateIntClass() {
+	// Create Int class type with just a value field and vtable pointer
+	intType := types.NewStruct(
+		types.NewPointer(types.I8), // vtable pointer
+		types.I32,                  // value field
+	)
+	g.classes["Int"] = intType
+
+	// Store that Int is a basic class that can't be inherited from
+	g.classInheritance["Int"] = "Object"
+
+	// Generate constructor for Int
+	intInit := g.module.NewFunc("Int_init", types.NewPointer(g.classes["Int"]))
+	self := ir.NewParam("self", types.NewPointer(g.classes["Int"]))
+	intInit.Params = append(intInit.Params, self)
+	block := intInit.NewBlock("")
+
+	// Initialize value to 0
+	valuePtr := block.NewGetElementPtr(g.classes["Int"], self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1)) // index 1 is the value field
+	block.NewStore(constant.NewInt(types.I32, 0), valuePtr)
+
+	block.NewRet(self)
 }
