@@ -7,6 +7,7 @@ class Main {
       let x : String <- "Hello" in {out_string("The string ");
       out_string(x);
       out_string(" is of length : ");
+      out_int(x.length());
       };
     }
   };

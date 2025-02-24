@@ -721,11 +721,27 @@ func (g *Generator) generateIOMethods() {
 }
 
 func (g *Generator) Generate(program *ast.Program) *ir.Module {
+	// Initialize malloc if not already done
 	if g.mallocFunc == nil {
 		g.mallocFunc = g.module.NewFunc("malloc",
 			types.NewPointer(types.I8),
 			ir.NewParam("size", types.I32))
+		g.mallocFunc.Linkage = enum.LinkageExternal
+		g.mallocFunc.CallingConv = enum.CallingConvC
 	}
+
+	// Declare all C functions with proper linkage once
+	strlenFunc := g.module.NewFunc("strlen", types.I32,
+		ir.NewParam("str", types.NewPointer(types.I8)))
+	strlenFunc.Linkage = enum.LinkageExternal
+	strlenFunc.CallingConv = enum.CallingConvC
+
+	strcpyFunc := g.module.NewFunc("strcpy", types.NewPointer(types.I8),
+		ir.NewParam("dest", types.NewPointer(types.I8)),
+		ir.NewParam("src", types.NewPointer(types.I8)))
+	strcpyFunc.Linkage = enum.LinkageExternal
+	strcpyFunc.CallingConv = enum.CallingConvC
+
 	// Declare exit function globally
 	exitFunc := g.module.NewFunc("exit", types.Void,
 		ir.NewParam("status", types.I32))
@@ -735,14 +751,10 @@ func (g *Generator) Generate(program *ast.Program) *ir.Module {
 
 	g.generateObjectClass()
 	g.generateIntClass()
+	g.generateStringMethods()
+
 	// Declare IO functions first
 	g.declareIOFunctions()
-	// Declare required C functions
-	g.module.NewFunc("strlen", types.I32,
-		ir.NewParam("str", types.NewPointer(types.I8)))
-	g.module.NewFunc("strcpy", types.NewPointer(types.I8),
-		ir.NewParam("dest", types.NewPointer(types.I8)),
-		ir.NewParam("src", types.NewPointer(types.I8)))
 
 	// Create IO class type
 	ioType := types.NewStruct(types.NewPointer(types.I8)) // vtable pointer
@@ -1021,24 +1033,55 @@ func (g *Generator) generateIntClass() {
 }
 
 func (g *Generator) generateStringMethods() {
-	// Add String_length method
-	lengthFunc := g.module.NewFunc("String_length", types.I32)
-	self := ir.NewParam("self", types.NewPointer(types.I8))
+	// Create String class type with vtable pointer and string data
+	stringType := types.NewStruct(
+		types.NewPointer(types.I8), // vtable pointer
+		types.NewPointer(types.I8), // actual string data
+	)
+	g.classes["String"] = stringType
+	g.classInheritance["String"] = "Object"
+
+	// Add String_length method - returns Int*
+	lengthFunc := g.module.NewFunc("String_length", types.NewPointer(g.classes["Int"]))
+	// Use correct type for self parameter
+	self := ir.NewParam("self", types.NewPointer(stringType))
 	lengthFunc.Params = append(lengthFunc.Params, self)
 
 	block := lengthFunc.NewBlock("")
 
-	// Call strlen
+	// Initialize Int object first
+	intSize := constant.NewInt(types.I32, 16) // size of Int object (vtable ptr + value)
+	intObj := block.NewCall(g.mallocFunc, intSize)
+	typedIntObj := block.NewBitCast(intObj, types.NewPointer(g.classes["Int"]))
+
+	// Set vtable pointer for Int object
+	vtablePtr := block.NewGetElementPtr(g.classes["Int"], typedIntObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("Int")
+	typeStrPtr := block.NewBitCast(typeStr, types.NewPointer(types.I8))
+	block.NewStore(typeStrPtr, vtablePtr)
+
+	// Get the string data pointer from the String object
+	strPtr := block.NewGetElementPtr(stringType, self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1)) // index 1 is the string data field
+
+	// Load the string data pointer
+	strDataPtr := block.NewLoad(types.NewPointer(types.I8), strPtr)
+
+	// Use strlen on the actual string data
 	strlenFunc := g.getFunction("strlen")
 	if strlenFunc == nil {
-		// Declare strlen if not already declared
-		strlenFunc = g.module.NewFunc("strlen", types.I32,
-			ir.NewParam("str", types.NewPointer(types.I8)))
+		panic("strlen function not found - should be declared in Generate method")
 	}
+	length := block.NewCall(strlenFunc, strDataPtr)
 
-	// Get length by calling strlen
-	result := block.NewCall(strlenFunc, self)
+	// Store length in Int object's value field
+	valuePtr := block.NewGetElementPtr(g.classes["Int"], typedIntObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	block.NewStore(length, valuePtr)
 
-	// Return the length
-	block.NewRet(result)
+	block.NewRet(typedIntObj)
 }
