@@ -427,25 +427,56 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 
 func (g *Generator) generateLetExpression(expr *ast.LetExpression) value.Value {
 	block := g.currentBlock
+	var result value.Value
 
 	// For each binding in the let expression
 	for _, binding := range expr.Bindings {
+		var initValue value.Value
+
+		if binding.Init != nil {
+			if strLit, ok := binding.Init.(*ast.StringLiteral); ok {
+				// Create string constant and get pointer to first element
+				strConst := g.createStringConstant(strLit.Value)
+				initValue = block.NewBitCast(strConst, types.NewPointer(types.I8))
+			} else {
+				initValue = g.generateExpression(binding.Init)
+			}
+		} else {
+			// Default initialization
+			switch binding.Type.Value {
+			case "String":
+				// Create empty string constant and get pointer to first element
+				strConst := g.createStringConstant("")
+				initValue = block.NewBitCast(strConst, types.NewPointer(types.I8))
+			case "Int":
+				initValue = constant.NewInt(types.I32, 0)
+			case "Bool":
+				initValue = constant.NewInt(types.I1, 0)
+			default:
+				// Create null pointer of the correct type
+				if ptrType, ok := g.convertType(binding.Type.Value).(*types.PointerType); ok {
+					initValue = constant.NewNull(ptrType)
+				} else {
+					initValue = constant.NewNull(types.NewPointer(types.I8))
+				}
+			}
+		}
+
 		// Allocate space for the variable
 		varType := g.convertType(binding.Type.Value)
 		alloca := block.NewAlloca(varType)
-
-		// If there's an initialization value, generate it and store it
-		if binding.Init != nil {
-			initValue := g.generateExpression(binding.Init)
-			block.NewStore(initValue, alloca)
-		}
+		block.NewStore(initValue, alloca)
 
 		// Add the variable to the symbol table for the current scope
 		g.addSymbol(g.currentClassName, binding.Identifier.Value, alloca)
 	}
 
 	// Generate and return the 'in' expression
-	return g.generateExpression(expr.In)
+	if expr.In != nil {
+		result = g.generateExpression(expr.In)
+	}
+
+	return result
 }
 
 func (g *Generator) createStringConstant(value string) value.Value {
@@ -987,4 +1018,27 @@ func (g *Generator) generateIntClass() {
 	block.NewStore(constant.NewInt(types.I32, 0), valuePtr)
 
 	block.NewRet(self)
+}
+
+func (g *Generator) generateStringMethods() {
+	// Add String_length method
+	lengthFunc := g.module.NewFunc("String_length", types.I32)
+	self := ir.NewParam("self", types.NewPointer(types.I8))
+	lengthFunc.Params = append(lengthFunc.Params, self)
+
+	block := lengthFunc.NewBlock("")
+
+	// Call strlen
+	strlenFunc := g.getFunction("strlen")
+	if strlenFunc == nil {
+		// Declare strlen if not already declared
+		strlenFunc = g.module.NewFunc("strlen", types.I32,
+			ir.NewParam("str", types.NewPointer(types.I8)))
+	}
+
+	// Get length by calling strlen
+	result := block.NewCall(strlenFunc, self)
+
+	// Return the length
+	block.NewRet(result)
 }

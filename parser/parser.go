@@ -246,7 +246,7 @@ func (p *Parser) parseMethod() *ast.Method {
 	if !p.expectAndPeek(lexer.COLON) {
 		return nil
 	}
-	if !p.expectAndPeek(lexer.TYPEID) {
+	if !p.expectAndPeek(lexer.TYPEID) && !p.peekTokenIs(lexer.SELF_TYPE) {
 		return nil
 	}
 
