@@ -423,6 +423,3 @@ func (l *Lexer) skipMultiLineComment() error {
 
 	return nil
 }
-
-// MULTI LINE COMMENTS
-// ARRAY + MODULE + IMPORTS

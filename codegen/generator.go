@@ -96,13 +96,79 @@ func (g *Generator) createClassType(class *ast.Class) {
 }
 
 func (g *Generator) generateClassMethods(class *ast.Class) {
+	g.generateConstructor(class)
 	for _, feature := range class.Features {
 		if method, ok := feature.(*ast.Method); ok {
 			g.generateMethod(class.Name.Value, method)
 		}
 	}
 }
+func (g *Generator) generateConstructor(class *ast.Class) {
+	className := class.Name.Value
+	constructorName := fmt.Sprintf("%s_init", className)
 
+	constructor := g.module.NewFunc(constructorName, types.NewPointer(g.classes[className]))
+	self := ir.NewParam("self", types.NewPointer(g.classes[className]))
+	constructor.Params = append(constructor.Params, self)
+
+	block := constructor.NewBlock("")
+	g.currentBlock = block
+	g.currentClassName = className
+	g.currentFunc = constructor
+
+	// Initialize parent class first
+	if parentName, exists := g.classInheritance[className]; exists && parentName != "Object" {
+		parentInit := g.getFunction(fmt.Sprintf("%s_init", parentName))
+		if parentInit != nil {
+			block.NewCall(parentInit, self)
+		}
+	}
+
+	// Initialize class attributes
+	for _, feature := range class.Features {
+		if attr, ok := feature.(*ast.Attribute); ok {
+			if fieldIdx, exists := g.getSymbol(className, attr.Name.Value); exists {
+				fieldPtr := block.NewGetElementPtr(g.classes[className], self,
+					constant.NewInt(types.I32, 0),
+					fieldIdx)
+
+				var initValue value.Value
+				if attr.Expression != nil {
+					g.currentBlock = block
+					initValue = g.generateExpression(attr.Expression)
+				} else {
+					// Default initialization
+					switch attr.Type.Value {
+					case "Int":
+						initValue = constant.NewInt(types.I32, 0)
+					case "Bool":
+						initValue = constant.NewInt(types.I1, 0)
+					case "String":
+						initValue = g.createStringConstant("")
+					default:
+						if classType, ok := g.classes[attr.Type.Value]; ok {
+							initValue = constant.NewNull(types.NewPointer(classType))
+						} else {
+							initValue = constant.NewNull(types.NewPointer(types.I8))
+						}
+					}
+				}
+
+				// Handle type conversion if needed
+				targetType := fieldPtr.Type().(*types.PointerType).ElemType
+				if !initValue.Type().Equal(targetType) {
+					if types.IsPointer(targetType) && types.IsPointer(initValue.Type()) {
+						initValue = block.NewBitCast(initValue, targetType)
+					}
+				}
+
+				block.NewStore(initValue, fieldPtr)
+			}
+		}
+	}
+
+	block.NewRet(self)
+}
 func (g *Generator) generateMethod(className string, method *ast.Method) {
 	g.currentClassName = className
 	returnType := g.convertType(method.Type.Value)
@@ -171,30 +237,32 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 	case *ast.BinaryExpression:
 		return g.generateBinaryExpression(e)
 	case *ast.ObjectIdentifier:
-		// Get the alloca instruction for this variable from symbol table
 		if value, exists := g.getSymbol(g.currentClassName, e.Value); exists {
 			block := g.currentBlock
 			if alloca, ok := value.(*ir.InstAlloca); ok {
-				// Always load from alloca when reading the variable
+				// Local variable
 				return block.NewLoad(alloca.ElemType, alloca)
-			} else if constInt, ok := value.(*constant.Int); ok {
-				return constInt
 			}
-			// For class fields, need to load from the field pointer
+
+			// Class field access
 			self := g.currentFunc.Params[0]
 			fieldPtr := block.NewGetElementPtr(g.classes[g.currentClassName], self,
 				constant.NewInt(types.I32, 0),
 				value) // value here is the field index
-			return block.NewLoad(g.convertType(e.Value), fieldPtr)
+
+			// Load the field value based on its type
+			fieldType := fieldPtr.Type().(*types.PointerType).ElemType
+			return block.NewLoad(fieldType, fieldPtr)
 		}
-		// If not found in symbol table, check if it's a parameter
+
+		// Check parameters
 		for _, param := range g.currentFunc.Params {
 			if param.Name() == e.Value {
 				return param
 			}
 		}
+
 		fmt.Printf("Warning: Object identifier '%s' not found\n", e.Value)
-		// Return a default integer value instead of null
 		return constant.NewInt(types.I32, 0)
 
 	case *ast.CallExpression:
@@ -263,38 +331,40 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		return lastValue // Return the value of the last expression
 
 	case *ast.Assignment:
-		fmt.Println("Entering Assignment case")
 		currBlock := g.currentBlock
+		assignValue := g.generateExpression(e.Expression)
 
-		// Add debug print for assignment details
-		fmt.Printf("Assignment: %s <- expression\n", e.Name)
-
-		// Generate the value to assign first
-		value := g.generateExpression(e.Expression)
-
-		// Try to get the variable from symbol table first
 		if varValue, exists := g.getSymbol(g.currentClassName, e.Name); exists {
-			// Check if it's a local variable (alloca instruction)
 			if alloca, ok := varValue.(*ir.InstAlloca); ok {
-				// Store into local variable
-				currBlock.NewStore(value, alloca)
-				// Return the stored value
-				return value
+				// Local variable assignment
+				currBlock.NewStore(assignValue, alloca)
+				return assignValue
 			}
 
-			// If not a local variable, it's a class field
+			// Class field assignment
 			self := g.currentFunc.Params[0]
 			fieldPtr := currBlock.NewGetElementPtr(g.classes[g.currentClassName], self,
 				constant.NewInt(types.I32, 0),
-				varValue) // varValue here is the field index
-			// Store the value
-			currBlock.NewStore(value, fieldPtr)
-			return value
+				varValue)
+
+			// Handle type conversion if needed
+			targetType := fieldPtr.Type().(*types.PointerType).ElemType
+			if !assignValue.Type().Equal(targetType) {
+				if types.IsPointer(targetType) && types.IsPointer(assignValue.Type()) {
+					assignValue = currBlock.NewBitCast(assignValue, targetType)
+				} else if targetType.Equal(types.I32) && types.IsPointer(assignValue.Type()) {
+					assignValue = currBlock.NewPtrToInt(assignValue, types.I32)
+				} else if types.IsPointer(targetType) && assignValue.Type().Equal(types.I32) {
+					assignValue = currBlock.NewIntToPtr(assignValue, targetType)
+				}
+			}
+
+			currBlock.NewStore(assignValue, fieldPtr)
+			return assignValue
 		}
 
-		// If we get here, the variable wasn't found
 		fmt.Printf("Warning: Assignment target '%s' not found\n", e.Name)
-		return constant.NewNull(types.NewPointer(types.I8))
+		return assignValue
 
 	case *ast.LetExpression:
 		return g.generateLetExpression(e)
@@ -532,6 +602,10 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		}
 
 		return constant.NewNull(types.NewPointer(types.I8))
+
+	case *ast.IsVoidExpression:
+		return g.handleIsVoidExpression(e)
+
 	default:
 		return constant.NewInt(types.I32, 0)
 	}
@@ -1221,4 +1295,33 @@ func (g *Generator) sortBranchesBySpecificity(branches []*ast.Case) []*ast.Case 
 	})
 
 	return sorted
+}
+
+func (g *Generator) handleIsVoidExpression(expr *ast.IsVoidExpression) value.Value {
+	// Generate code for the expression to test
+	testExpr := g.generateExpression(expr.Expression)
+	if testExpr == nil {
+		return constant.NewInt(types.I1, 1) // true if expression is nil
+	}
+
+	// Handle different types
+	switch testExpr.Type() {
+	case types.I32: // Int
+		return constant.NewInt(types.I1, 0) // Int can't be void
+
+	case types.I1: // Bool
+		return constant.NewInt(types.I1, 0) // Bool can't be void
+
+	default:
+		// For class types (which are always pointers in our implementation)
+		if ptrType, ok := testExpr.Type().(*types.PointerType); ok {
+			nullPtr := constant.NewNull(ptrType)
+			return g.currentBlock.NewICmp(enum.IPredEQ, testExpr, nullPtr)
+		}
+
+		// For any other type, cast to i8* and compare with null
+		castedExpr := g.currentBlock.NewBitCast(testExpr, types.NewPointer(types.I8))
+		nullPtr := constant.NewNull(types.NewPointer(types.I8))
+		return g.currentBlock.NewICmp(enum.IPredEQ, castedExpr, nullPtr)
+	}
 }

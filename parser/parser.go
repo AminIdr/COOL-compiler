@@ -921,3 +921,4 @@ func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expres
 
 // void + self + modules + linked list + string methods
 // @ dispatch + case + comments + multi line + dynamic dispatch
+// parse of case ;;

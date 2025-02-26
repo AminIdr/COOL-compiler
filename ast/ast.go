@@ -41,6 +41,9 @@ func (oi *ObjectIdentifier) expressionNode()      {}
 
 type Program struct {
 	Classes []*Class
+	// IDR
+	Modules []*ModuleDeclaration
+	Imports []*ImportStatement
 }
 
 func (p *Program) TokenLiteral() string { return "" }
@@ -288,3 +291,20 @@ type StaticDispatchExpression struct {
 
 func (sde *StaticDispatchExpression) expressionNode()      {}
 func (sde *StaticDispatchExpression) TokenLiteral() string { return sde.Token.Literal }
+
+// ModuleDeclaration represents a module declaration
+type ModuleDeclaration struct {
+	Token lexer.Token     // The 'module' token
+	Name  *TypeIdentifier // Module name
+	Body  []*Class        // Classes defined in the module
+}
+
+func (md *ModuleDeclaration) TokenLiteral() string { return md.Token.Literal }
+
+// ImportStatement represents an import statement
+type ImportStatement struct {
+	Token  lexer.Token     // The 'import' token
+	Module *TypeIdentifier // The module being imported
+}
+
+func (is *ImportStatement) TokenLiteral() string { return is.Token.Literal }
