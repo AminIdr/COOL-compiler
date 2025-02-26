@@ -71,6 +71,7 @@ func New(l *lexer.Lexer) *Parser {
 
 	// IDR
 	p.registerInfix(lexer.LPAREN, p.parseCallExpression)
+	p.registerInfix(lexer.AT, p.parseStaticDispatchExpression)
 	p.registerInfix(lexer.DOT, p.parseDispatchExpression)
 
 	p.nextToken()
@@ -573,7 +574,8 @@ var precedences = map[lexer.TokenType]int{
 	lexer.DIVIDE: PRODUCT,
 	lexer.TIMES:  PRODUCT,
 	lexer.LPAREN: CALL,
-	lexer.DOT:    DOT, // Add DOT precedence
+	lexer.DOT:    DOT,
+	lexer.AT:     DOT, // Same precedence as DOT since they're both dispatch operators
 	lexer.ASSIGN: EQUALS,
 
 	lexer.CASE: LOWEST,
@@ -854,5 +856,68 @@ func (p *Parser) parseCaseExpression() ast.Expression {
 	return expr
 }
 
-// Case + @ dispatch + void + self + modules + linked list
-// comments + multi line + dynamic dispatch
+func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expression {
+	exp := &ast.StaticDispatchExpression{
+		Token:  p.curToken, // AT token
+		Object: object,
+	}
+
+	// After @, expect a type name
+	if !p.expectAndPeek(lexer.TYPEID) {
+		return nil
+	}
+
+	exp.StaticType = &ast.TypeIdentifier{
+		Token: p.curToken,
+		Value: p.curToken.Literal,
+	}
+
+	// After type, expect a dot
+	if !p.expectAndPeek(lexer.DOT) {
+		return nil
+	}
+
+	// After dot, expect method name
+	if !p.expectAndPeek(lexer.OBJECTID) {
+		return nil
+	}
+
+	exp.Method = &ast.ObjectIdentifier{
+		Token: p.curToken,
+		Value: p.curToken.Literal,
+	}
+
+	// After method name, expect opening parenthesis
+	if !p.expectAndPeek(lexer.LPAREN) {
+		return nil
+	}
+
+	// Move past '('
+	p.nextToken()
+
+	exp.Arguments = []ast.Expression{}
+
+	// Handle empty argument list
+	if p.curTokenIs(lexer.RPAREN) {
+		return exp
+	}
+
+	// Parse first argument
+	exp.Arguments = append(exp.Arguments, p.parseExpression(LOWEST))
+
+	// Parse additional arguments
+	for p.peekTokenIs(lexer.COMMA) {
+		p.nextToken() // move to comma
+		p.nextToken() // move past comma
+		exp.Arguments = append(exp.Arguments, p.parseExpression(LOWEST))
+	}
+
+	if !p.expectAndPeek(lexer.RPAREN) {
+		return nil
+	}
+
+	return exp
+}
+
+// void + self + modules + linked list + string methods
+// @ dispatch + case + comments + multi line + dynamic dispatch

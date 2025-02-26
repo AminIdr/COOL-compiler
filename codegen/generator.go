@@ -385,6 +385,40 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		// Generate the method call
 		return g.currentBlock.NewCall(method, args...)
 
+	case *ast.StaticDispatchExpression:
+		// Generate code for the object first
+		receiver := g.generateExpression(e.Object)
+		if receiver == nil {
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Get the static type specified in the dispatch
+		staticTypeName := e.StaticType.Value
+
+		// Get method name by combining static type and method name
+		methodName := fmt.Sprintf("%s_%s", staticTypeName, e.Method.Value)
+
+		// Look up the method
+		method := g.getFunction(methodName)
+		if method == nil {
+			fmt.Printf("Error: Method %s not found in class %s\n", e.Method.Value, staticTypeName)
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Generate code for arguments
+		args := []value.Value{receiver} // First argument is always 'self'
+
+		// Generate code for each argument
+		for _, arg := range e.Arguments {
+			argValue := g.generateExpression(arg)
+			if argValue != nil {
+				args = append(args, argValue)
+			}
+		}
+
+		// Generate the static method call
+		return g.currentBlock.NewCall(method, args...)
+
 	case *ast.CaseExpression:
 		// Generate test expression
 		test := g.generateExpression(e.Expression)
@@ -1125,17 +1159,19 @@ func (g *Generator) generateStringMethods() {
 	g.classes["String"] = stringType
 	g.classInheritance["String"] = "Object"
 
-	// Add String_length method - returns Int*
+	// Generate length method
+	g.generateStringLength()
+}
+
+func (g *Generator) generateStringLength() {
 	lengthFunc := g.module.NewFunc("String_length", types.NewPointer(g.classes["Int"]))
-	// Use correct type for self parameter
-	self := ir.NewParam("self", types.NewPointer(stringType))
+	self := ir.NewParam("self", types.NewPointer(g.classes["String"]))
 	lengthFunc.Params = append(lengthFunc.Params, self)
 
 	block := lengthFunc.NewBlock("")
 
-	// Initialize Int object first
-	intSize := constant.NewInt(types.I32, 16) // size of Int object (vtable ptr + value)
-	intObj := block.NewCall(g.mallocFunc, intSize)
+	// Create a new Int object
+	intObj := block.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16)) // size of Int (vtable + value)
 	typedIntObj := block.NewBitCast(intObj, types.NewPointer(g.classes["Int"]))
 
 	// Set vtable pointer for Int object
@@ -1143,25 +1179,19 @@ func (g *Generator) generateStringMethods() {
 		constant.NewInt(types.I32, 0),
 		constant.NewInt(types.I32, 0))
 	typeStr := g.createStringConstant("Int")
-	typeStrPtr := block.NewBitCast(typeStr, types.NewPointer(types.I8))
-	block.NewStore(typeStrPtr, vtablePtr)
+	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
 
-	// Get the string data pointer from the String object
-	strPtr := block.NewGetElementPtr(stringType, self,
+	// Get string data pointer from self
+	strDataPtr := block.NewGetElementPtr(g.classes["String"], self,
 		constant.NewInt(types.I32, 0),
-		constant.NewInt(types.I32, 1)) // index 1 is the string data field
+		constant.NewInt(types.I32, 1))
+	strPtr := block.NewLoad(types.NewPointer(types.I8), strDataPtr)
 
-	// Load the string data pointer
-	strDataPtr := block.NewLoad(types.NewPointer(types.I8), strPtr)
-
-	// Use strlen on the actual string data
+	// Call strlen
 	strlenFunc := g.getFunction("strlen")
-	if strlenFunc == nil {
-		panic("strlen function not found - should be declared in Generate method")
-	}
-	length := block.NewCall(strlenFunc, strDataPtr)
+	length := block.NewCall(strlenFunc, strPtr)
 
-	// Store length in Int object's value field
+	// Store length in Int object
 	valuePtr := block.NewGetElementPtr(g.classes["Int"], typedIntObj,
 		constant.NewInt(types.I32, 0),
 		constant.NewInt(types.I32, 1))

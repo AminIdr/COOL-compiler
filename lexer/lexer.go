@@ -271,6 +271,10 @@ func (l *Lexer) NextToken() Token {
 			tok.Literal = "-"
 			l.readChar()
 		}
+	case l.char == '@':
+		tok.Type = AT
+		tok.Literal = "@"
+		l.readChar()
 	case l.char == '/':
 		tok.Type = DIVIDE
 		tok.Literal = "/"

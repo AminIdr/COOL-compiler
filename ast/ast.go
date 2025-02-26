@@ -276,3 +276,15 @@ type DispatchExpression struct {
 
 func (de *DispatchExpression) expressionNode()      {}
 func (de *DispatchExpression) TokenLiteral() string { return de.Token.Literal }
+
+// StaticDispatchExpression represents a static method dispatch in the AST
+type StaticDispatchExpression struct {
+	Token      lexer.Token       // The '@' token
+	Object     Expression        // The object on which the method is called
+	StaticType *TypeIdentifier   // The static type specified after @
+	Method     *ObjectIdentifier // The method being called
+	Arguments  []Expression      // The arguments passed to the method
+}
+
+func (sde *StaticDispatchExpression) expressionNode()      {}
+func (sde *StaticDispatchExpression) TokenLiteral() string { return sde.Token.Literal }

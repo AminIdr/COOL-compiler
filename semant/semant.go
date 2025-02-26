@@ -487,3 +487,5 @@ func (sa *SemanticAnalyser) findLCA(type1, type2 string) string {
 		current = parent
 	}
 }
+
+// For this form of dispatch, the static type to the left of “@”must conform to the type specified to the right of “@”
