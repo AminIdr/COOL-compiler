@@ -58,6 +58,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.NEG, p.parsePrefixExpression)
 	p.registerPrefix(lexer.LBRACE, p.parseBlockExpression)
 	p.registerPrefix(lexer.LET, p.parseLetExpression)
+	p.registerPrefix(lexer.CASE, p.parseCaseExpression)
 
 	// Register infix parsers
 	p.registerInfix(lexer.PLUS, p.parseInfixExpression)
@@ -70,7 +71,7 @@ func New(l *lexer.Lexer) *Parser {
 
 	// IDR
 	p.registerInfix(lexer.LPAREN, p.parseCallExpression)
-	p.registerInfix(lexer.DOT, p.parseStaticDispatchExpression)
+	p.registerInfix(lexer.DOT, p.parseDispatchExpression)
 
 	p.nextToken()
 	p.nextToken()
@@ -574,6 +575,9 @@ var precedences = map[lexer.TokenType]int{
 	lexer.LPAREN: CALL,
 	lexer.DOT:    DOT, // Add DOT precedence
 	lexer.ASSIGN: EQUALS,
+
+	lexer.CASE: LOWEST,
+	lexer.OF:   LOWEST,
 }
 
 func (p *Parser) parseBlockExpression() ast.Expression {
@@ -697,7 +701,6 @@ func (p *Parser) parseLetExpression() ast.Expression {
 	return exp
 }
 
-// Add this new function
 func (p *Parser) parseIdentifierOrAssignment() ast.Expression {
 	identifier := &ast.ObjectIdentifier{Token: p.curToken, Value: p.curToken.Literal}
 
@@ -723,8 +726,8 @@ func (p *Parser) parseIdentifierOrAssignment() ast.Expression {
 }
 
 // Add new function for parsing static dispatch
-func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expression {
-	exp := &ast.StaticDispatchExpression{
+func (p *Parser) parseDispatchExpression(object ast.Expression) ast.Expression {
+	exp := &ast.DispatchExpression{
 		Token:  p.curToken,
 		Object: object,
 	}
@@ -770,3 +773,86 @@ func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expres
 
 	return exp
 }
+
+func (p *Parser) parseCaseExpression() ast.Expression {
+	expr := &ast.CaseExpression{
+		Token: p.curToken,
+	}
+
+	p.nextToken() // move past 'case'
+
+	// Parse the expression being cased on
+	expr.Expression = p.parseExpression(LOWEST)
+
+	// Check for OF token
+	if !p.expectAndPeek(lexer.OF) {
+		return nil
+	}
+
+	p.nextToken() // move past OF token
+
+	// Parse case branches
+	expr.Cases = []*ast.Case{}
+
+	// We must have at least one branch
+	for !p.curTokenIs(lexer.ESAC) && !p.curTokenIs(lexer.EOF) {
+		caseNode := &ast.Case{}
+
+		// Parse pattern (identifier:type)
+		if !p.curTokenIs(lexer.OBJECTID) {
+			p.currentError(lexer.OBJECTID)
+			return nil
+		}
+
+		// Store the identifier
+		caseNode.ObjectIdentifier = &ast.ObjectIdentifier{
+			Token: p.curToken,
+			Value: p.curToken.Literal,
+		}
+
+		// Parse colon
+		if !p.expectAndPeek(lexer.COLON) {
+			return nil
+		}
+
+		// Parse type
+		if !p.expectAndPeek(lexer.TYPEID) {
+			return nil
+		}
+
+		// Store the type identifier
+		caseNode.TypeIdentifier = &ast.TypeIdentifier{
+			Token: p.curToken,
+			Value: p.curToken.Literal,
+		}
+
+		// Parse =>
+		if !p.expectAndPeek(lexer.DARROW) {
+			return nil
+		}
+
+		p.nextToken() // move past '=>'
+
+		// Parse the body expression
+		caseNode.Body = p.parseExpression(LOWEST)
+
+		// Each branch must end with a semicolon
+		if !p.expectAndPeek(lexer.SEMI) {
+			return nil
+		}
+
+		expr.Cases = append(expr.Cases, caseNode)
+		p.nextToken() // move past semicolon
+	}
+
+	if !p.curTokenIs(lexer.ESAC) {
+		p.currentError(lexer.ESAC)
+		return nil
+	}
+	p.nextToken() // move past 'esac'
+
+	return expr
+}
+
+// Case + @ dispatch + void + self + modules + linked list
+// comments + multi line + dynamic dispatch

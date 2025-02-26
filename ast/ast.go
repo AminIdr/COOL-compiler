@@ -90,6 +90,9 @@ type Formal struct {
 
 func (f *Formal) TokenLiteral() string { return f.Name.Value }
 
+// Implement Expression interface
+func (f *Formal) expressionNode() {}
+
 // IntegerLiteral represents an integer literal in the AST.
 type IntegerLiteral struct {
 	Token lexer.Token // The token representing the integer literal.
@@ -225,8 +228,9 @@ type CaseBranch struct {
 func (cb *CaseBranch) TokenLiteral() string { return cb.Token.Literal }
 
 type Case struct {
-	Pattern Expression
-	Body    Expression
+	ObjectIdentifier *ObjectIdentifier // The variable name
+	TypeIdentifier   *TypeIdentifier   // The type to match
+	Body             Expression        // The expression to evaluate if matched
 }
 
 type Binding struct {
@@ -272,14 +276,3 @@ type DispatchExpression struct {
 
 func (de *DispatchExpression) expressionNode()      {}
 func (de *DispatchExpression) TokenLiteral() string { return de.Token.Literal }
-
-// StaticDispatchExpression represents a method dispatch in the AST (e.g., obj.method())
-type StaticDispatchExpression struct {
-	Token     lexer.Token       // The '.' token
-	Object    Expression        // The object on which the method is called
-	Method    *ObjectIdentifier // The method being called
-	Arguments []Expression      // The arguments passed to the method
-}
-
-func (de *StaticDispatchExpression) expressionNode()      {}
-func (de *StaticDispatchExpression) TokenLiteral() string { return de.Token.Literal }

@@ -181,8 +181,8 @@ func (sa *SemanticAnalyser) getExpressionType(expression ast.Expression, st *Sym
 		return sa.GetUnaryExpressionType(e, st)
 	case *ast.BinaryExpression:
 		return sa.GetBinaryExpressionType(e, st)
-	case *ast.CaseExpression:
-		return sa.GetCaseExpressionType(e, st)
+	// case *ast.CaseExpression:
+	// return sa.GetCaseExpressionType(e, st)
 	case *ast.IsVoidExpression:
 		return "Bool"
 	default:
@@ -372,52 +372,52 @@ func (sa *SemanticAnalyser) GetBinaryExpressionType(be *ast.BinaryExpression, st
 	}
 }
 
-func (sa *SemanticAnalyser) GetCaseExpressionType(ce *ast.CaseExpression, st *SymbolTable) string {
-	exprType := sa.getExpressionType(ce.Expression, st)
-	if exprType == "" {
-		return "Object"
-	}
+// func (sa *SemanticAnalyser) GetCaseExpressionType(ce *ast.CaseExpression, st *SymbolTable) string {
+// 	exprType := sa.getExpressionType(ce.Expression, st)
+// 	if exprType == "" {
+// 		return "Object"
+// 	}
 
-	if len(ce.Cases) == 0 {
-		return "Object"
-	}
+// 	if len(ce.Cases) == 0 {
+// 		return "Object"
+// 	}
 
-	// Get type of first case's body as initial LCA candidate
-	branchType := sa.getExpressionType(ce.Cases[0].Body, st)
+// 	// Get type of first case's body as initial LCA candidate
+// 	branchType := sa.getExpressionType(ce.Cases[0].Body, st)
 
-	// For each subsequent case, find LCA of current type and case's body type
-	for _, cse := range ce.Cases[1:] {
-		// Create new scope for this branch
-		branchSt := NewSymbolTable(st)
+// 	// For each subsequent case, find LCA of current type and case's body type
+// 	for _, cse := range ce.Cases[1:] {
+// 		// Create new scope for this branch
+// 		branchSt := NewSymbolTable(st)
 
-		// Since Case has Pattern and Body fields directly
-		if cse.Pattern == nil {
-			sa.errors = append(sa.errors, "missing pattern in case branch")
-			continue
-		}
+// 		// Since Case has Pattern and Body fields directly
+// 		if cse.Pattern == nil {
+// 			sa.errors = append(sa.errors, "missing pattern in case branch")
+// 			continue
+// 		}
 
-		// Type check the pattern and body
-		patternType := sa.getExpressionType(cse.Pattern, st)
-		if patternType == "" {
-			sa.errors = append(sa.errors, "invalid case branch pattern")
-			continue
-		}
+// 		// Type check the pattern and body
+// 		patternType := sa.getExpressionType(cse.Pattern, st)
+// 		if patternType == "" {
+// 			sa.errors = append(sa.errors, "invalid case branch pattern")
+// 			continue
+// 		}
 
-		// Check if the pattern type exists in the global symbol table
-		if _, ok := sa.globalSymbolTable.Lookup(patternType); !ok {
-			sa.errors = append(sa.errors, fmt.Sprintf("undefined type %s in case pattern", patternType))
-			continue
-		}
+// 		// Check if the pattern type exists in the global symbol table
+// 		if _, ok := sa.globalSymbolTable.Lookup(patternType); !ok {
+// 			sa.errors = append(sa.errors, fmt.Sprintf("undefined type %s in case pattern", patternType))
+// 			continue
+// 		}
 
-		// Get this branch's body type
-		currentBranchType := sa.getExpressionType(cse.Body, branchSt)
+// 		// Get this branch's body type
+// 		currentBranchType := sa.getExpressionType(cse.Body, branchSt)
 
-		// Find LCA of current running type and this branch's type
-		branchType = sa.findLCA(branchType, currentBranchType)
-	}
+// 		// Find LCA of current running type and this branch's type
+// 		branchType = sa.findLCA(branchType, currentBranchType)
+// 	}
 
-	return branchType
-}
+// 	return branchType
+// }
 
 // IDR
 

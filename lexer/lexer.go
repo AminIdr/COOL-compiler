@@ -213,6 +213,16 @@ func (l *Lexer) NextToken() Token {
 		tok.Type = EOF
 		tok.Literal = ""
 	case l.char == '(':
+		if l.peekChar() == '*' {
+			l.readChar() // consume '*'
+			err := l.skipMultiLineComment()
+			if err != nil {
+				tok.Type = ERROR
+				tok.Literal = err.Error()
+				return tok
+			}
+			return l.NextToken() // Skip the comment and get the next token
+		}
 		tok.Type = LPAREN
 		tok.Literal = "("
 		l.readChar()
@@ -249,24 +259,22 @@ func (l *Lexer) NextToken() Token {
 		tok.Literal = "*"
 		l.readChar()
 	case l.char == '-':
-		tok.Type = MINUS
-		tok.Literal = "-"
-		l.readChar()
-	// This could be a comment or a divide
-	// TODO: add support for Multi line comment
-	case l.char == '/':
-		if l.peekChar() == '/' {
-			// This is a single line comment
+		if l.peekChar() == '-' {
+			// Single line comment
+			l.readChar() // consume second '-'
 			for l.char != '\n' && l.char != 0 {
 				l.readChar()
 			}
 			return l.NextToken() // Skip the comment and get the next token
 		} else {
-			tok.Type = DIVIDE
-			tok.Literal = "/"
+			tok.Type = MINUS
+			tok.Literal = "-"
 			l.readChar()
 		}
-
+	case l.char == '/':
+		tok.Type = DIVIDE
+		tok.Literal = "/"
+		l.readChar()
 	case l.char == '~':
 		tok.Type = NEG
 		tok.Literal = "~"
@@ -381,6 +389,35 @@ func (l *Lexer) NextToken() Token {
 	}
 
 	return tok
+}
+
+func (l *Lexer) skipMultiLineComment() error {
+	nestLevel := 1
+	l.readChar() // consume the '*' after '('
+
+	for nestLevel > 0 {
+		if l.char == 0 {
+			return fmt.Errorf("EOF in comment")
+		}
+
+		if l.char == '(' && l.peekChar() == '*' {
+			l.readChar() // consume '*'
+			l.readChar()
+			nestLevel++
+			continue
+		}
+
+		if l.char == '*' && l.peekChar() == ')' {
+			l.readChar() // consume ')'
+			l.readChar()
+			nestLevel--
+			continue
+		}
+
+		l.readChar()
+	}
+
+	return nil
 }
 
 // MULTI LINE COMMENTS

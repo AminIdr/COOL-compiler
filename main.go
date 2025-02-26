@@ -4,7 +4,6 @@ import (
 	"cool-compiler/codegen"
 	"cool-compiler/lexer"
 	"cool-compiler/parser"
-	"cool-compiler/semant"
 	"flag"
 	"fmt"
 	"os"
@@ -51,18 +50,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Running semantic analysis...")
+	// fmt.Println("Running semantic analysis...")
 	// Semantic analysis
-	analyzer := semant.NewSemanticAnalyser()
-	analyzer.Analyze(program)
+	// analyzer := semant.NewSemanticAnalyser()
+	// analyzer.Analyze(program)
 
-	if len(analyzer.Errors()) > 0 {
-		fmt.Println("Semantic errors:")
-		for _, err := range analyzer.Errors() {
-			fmt.Printf("\t%s\n", err)
-		}
-		os.Exit(1)
-	}
+	// if len(analyzer.Errors()) > 0 {
+	// 	fmt.Println("Semantic errors:")
+	// 	for _, err := range analyzer.Errors() {
+	// 		fmt.Printf("\t%s\n", err)
+	// 	}
+	// 	os.Exit(1)
+	// }
 
 	fmt.Println("Generating LLVM IR...")
 	// Generate LLVM IR

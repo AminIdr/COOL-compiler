@@ -3,6 +3,7 @@ package codegen
 import (
 	"cool-compiler/ast"
 	"fmt"
+	"sort" // Add this import
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -350,7 +351,6 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 
 		return instance
 
-		// Add to generateExpression switch statement
 	case *ast.DispatchExpression:
 		// Generate code for the object
 		receiver := g.generateExpression(e.Object)
@@ -385,41 +385,119 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		// Generate the method call
 		return g.currentBlock.NewCall(method, args...)
 
-	case *ast.StaticDispatchExpression:
-		receiver := g.generateExpression(e.Object)
-		if receiver == nil {
-			fmt.Printf("Error: Receiver is nil for static dispatch\n")
+	case *ast.CaseExpression:
+		// Generate test expression
+		test := g.generateExpression(e.Expression)
+		if test == nil {
 			return constant.NewNull(types.NewPointer(types.I8))
 		}
 
-		// Get receiver's class name
-		var className string
-		if recvType, ok := receiver.Type().(*types.PointerType); ok {
-			if structType, ok := recvType.ElemType.(*types.StructType); ok {
-				className = g.getClassNameFromType(structType)
+		// Get the type of the test expression
+		var typeStr value.Value
+		if types.IsPointer(test.Type()) {
+			if test.Type().Equal(types.NewPointer(types.I8)) {
+				// For strings, create string type directly
+				typeStr = g.createStringConstant("String")
+				typeStr = g.currentBlock.NewBitCast(typeStr, types.NewPointer(types.I8))
+			} else {
+				// For class instances, get type from vtable
+				vtablePtr := g.currentBlock.NewGetElementPtr(test.Type().(*types.PointerType).ElemType,
+					test,
+					constant.NewInt(types.I32, 0),
+					constant.NewInt(types.I32, 0))
+				typeStr = g.currentBlock.NewLoad(types.NewPointer(types.I8), vtablePtr)
+			}
+		} else {
+			// For primitive types (Int, Bool), create type string directly
+			switch test.Type() {
+			case types.I32:
+				typeStr = g.createStringConstant("Int")
+			case types.I1:
+				typeStr = g.createStringConstant("Bool")
+			default:
+				typeStr = g.createStringConstant("Object")
+			}
+			typeStr = g.currentBlock.NewBitCast(typeStr, types.NewPointer(types.I8))
+		}
+
+		// Sort branches by specificity
+		sortedBranches := g.sortBranchesBySpecificity(e.Cases)
+
+		// Create merge block for final result
+		mergeBlock := g.currentFunc.NewBlock("case.merge")
+
+		// Create PHI node for collecting results
+		incomingValues := []value.Value{}
+		incomingBlocks := []*ir.Block{}
+
+		// Store current block for branching
+		currentBlock := g.currentBlock
+
+		// Generate branches
+		var nextBlock *ir.Block
+		for i, branch := range sortedBranches {
+			caseBlock := g.currentFunc.NewBlock(fmt.Sprintf("case.%d", i))
+			nextBlock = g.currentFunc.NewBlock(fmt.Sprintf("case.next.%d", i))
+
+			// Compare types
+			branchTypeStr := g.createStringConstant(branch.TypeIdentifier.Value)
+			strcmp := g.getFunction("strcmp")
+			cmpResult := currentBlock.NewCall(strcmp, typeStr,
+				currentBlock.NewBitCast(branchTypeStr, types.NewPointer(types.I8)))
+			isMatch := currentBlock.NewICmp(enum.IPredEQ, cmpResult, constant.NewInt(types.I32, 0))
+			currentBlock.NewCondBr(isMatch, caseBlock, nextBlock)
+
+			// Generate case body
+			g.currentBlock = caseBlock
+			// Create new scope for the case variable
+			g.initializeSymbolTable(g.currentClassName)
+
+			// Bind the matched value to the case variable
+			alloca := caseBlock.NewAlloca(test.Type())
+			caseBlock.NewStore(test, alloca)
+			g.addSymbol(g.currentClassName, branch.ObjectIdentifier.Value, alloca)
+
+			// Generate the branch body
+			result := g.generateExpression(branch.Body)
+			if result != nil {
+				incomingValues = append(incomingValues, result)
+				incomingBlocks = append(incomingBlocks, g.currentBlock)
+				if g.currentBlock.Term == nil {
+					g.currentBlock.NewBr(mergeBlock)
+				}
+			}
+
+			// Move to next comparison
+			currentBlock = nextBlock
+		}
+
+		// Handle no-match case (abort)
+		abortBlock := g.currentFunc.NewBlock("case.abort")
+		currentBlock.NewBr(abortBlock)
+		g.currentBlock = abortBlock
+
+		// Call abort
+		abortFunc := g.getFunction("Object_abort")
+		if abortFunc != nil {
+			abortResult := g.currentBlock.NewCall(abortFunc, g.currentFunc.Params[0])
+			incomingValues = append(incomingValues, abortResult)
+			incomingBlocks = append(incomingBlocks, g.currentBlock)
+			if g.currentBlock.Term == nil {
+				g.currentBlock.NewBr(mergeBlock)
 			}
 		}
 
-		// Find method through inheritance chain
-		methodName, found := g.findMethodInHierarchy(className, e.Method.Value)
-		if !found {
-			fmt.Printf("Error: Method %s not found in class hierarchy of %s\n",
-				e.Method.Value, className)
-			return constant.NewNull(types.NewPointer(types.I8))
-		}
-
-		// Get method and generate call
-		method := g.getFunction(methodName)
-		args := []value.Value{receiver}
-		for _, arg := range e.Arguments {
-			argValue := g.generateExpression(arg)
-			if argValue != nil {
-				args = append(args, argValue)
+		// Set up merge block with PHI node
+		g.currentBlock = mergeBlock
+		if len(incomingValues) > 0 {
+			incomings := make([]*ir.Incoming, len(incomingValues))
+			for i := range incomingValues {
+				incomings[i] = ir.NewIncoming(incomingValues[i], incomingBlocks[i])
 			}
+			return mergeBlock.NewPhi(incomings...)
 		}
 
-		return g.currentBlock.NewCall(method, args...)
-
+		return constant.NewNull(types.NewPointer(types.I8))
 	default:
 		return constant.NewInt(types.I32, 0)
 	}
@@ -729,6 +807,12 @@ func (g *Generator) Generate(program *ast.Program) *ir.Module {
 		g.mallocFunc.Linkage = enum.LinkageExternal
 		g.mallocFunc.CallingConv = enum.CallingConvC
 	}
+
+	strcmp := g.module.NewFunc("strcmp", types.I32,
+		ir.NewParam("s1", types.NewPointer(types.I8)),
+		ir.NewParam("s2", types.NewPointer(types.I8)))
+	strcmp.Linkage = enum.LinkageExternal
+	strcmp.CallingConv = enum.CallingConvC
 
 	// Declare all C functions with proper linkage once
 	strlenFunc := g.module.NewFunc("strlen", types.I32,
@@ -1084,4 +1168,27 @@ func (g *Generator) generateStringMethods() {
 	block.NewStore(length, valuePtr)
 
 	block.NewRet(typedIntObj)
+}
+
+func (g *Generator) sortBranchesBySpecificity(branches []*ast.Case) []*ast.Case {
+	sorted := make([]*ast.Case, len(branches))
+	copy(sorted, branches)
+
+	// Sort branches based on inheritance hierarchy (most specific first)
+	sort.Slice(sorted, func(i, j int) bool {
+		type1 := sorted[i].TypeIdentifier.Value
+		type2 := sorted[j].TypeIdentifier.Value
+
+		// Check if type1 is a subclass of type2
+		current := type1
+		for current != "Object" {
+			if current == type2 {
+				return true
+			}
+			current = g.classInheritance[current]
+		}
+		return false
+	})
+
+	return sorted
 }
