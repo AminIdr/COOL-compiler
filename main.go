@@ -2,6 +2,7 @@ package main
 
 import (
 	"cool-compiler/codegen"
+	"cool-compiler/importer"
 	"cool-compiler/lexer"
 	"cool-compiler/parser"
 	"flag"
@@ -25,17 +26,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Reading input file: %s\n", *inputFile)
-	// Read input file
-	source, err := os.ReadFile(*inputFile)
+	fmt.Printf("Processing imports for file: %s\n", *inputFile)
+	// Create new importer
+	imp := importer.New()
+
+	// Process the file and its imports
+	processedSource, err := imp.ProcessFile(*inputFile)
 	if err != nil {
-		fmt.Printf("Error reading input file: %v\n", err)
+		fmt.Printf("Error processing imports: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Println("Creating lexer...")
-	// Create lexer from string input
-	l := lexer.NewLexer(strings.NewReader(string(source)))
+	// Create lexer from processed source
+	l := lexer.NewLexer(strings.NewReader(processedSource))
 
 	fmt.Println("Parsing program...")
 	// Parse COOL program
@@ -49,19 +53,6 @@ func main() {
 		}
 		os.Exit(1)
 	}
-
-	// fmt.Println("Running semantic analysis...")
-	// Semantic analysis
-	// analyzer := semant.NewSemanticAnalyser()
-	// analyzer.Analyze(program)
-
-	// if len(analyzer.Errors()) > 0 {
-	// 	fmt.Println("Semantic errors:")
-	// 	for _, err := range analyzer.Errors() {
-	// 		fmt.Printf("\t%s\n", err)
-	// 	}
-	// 	os.Exit(1)
-	// }
 
 	fmt.Println("Generating LLVM IR...")
 	// Generate LLVM IR
