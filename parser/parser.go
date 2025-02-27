@@ -851,7 +851,7 @@ func (p *Parser) parseCaseExpression() ast.Expression {
 		p.currentError(lexer.ESAC)
 		return nil
 	}
-	p.nextToken() // move past 'esac'
+	// p.nextToken() // move past 'esac'
 
 	return expr
 }
