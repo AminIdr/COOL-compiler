@@ -680,6 +680,9 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 	case *ast.IsVoidExpression:
 		return g.handleIsVoidExpression(e)
 
+	case *ast.UnaryExpression:
+		return g.generateUnaryExpression(e)
+
 	default:
 		return constant.NewInt(types.I32, 0)
 	}
@@ -725,8 +728,23 @@ func (g *Generator) generateLetExpression(expr *ast.LetExpression) value.Value {
 		// Allocate space for the variable
 		varType := g.convertType(binding.Type.Value)
 		alloca := block.NewAlloca(varType)
+		// Check if types are compatible, if not perform appropriate conversion
+		// Check if types are compatible, if not perform appropriate conversion
+		if !initValue.Type().Equal(alloca.ElemType) {
+			if types.IsPointer(alloca.ElemType) && types.IsPointer(initValue.Type()) {
+				// If both are pointers but of different types, do a bitcast
+				initValue = block.NewBitCast(initValue, alloca.ElemType)
+			} else if types.IsPointer(alloca.ElemType) && !types.IsPointer(initValue.Type()) {
+				// If destination is pointer but source is not, convert integer 0 to null
+				if initValue.Type().Equal(types.I32) || initValue.Type().Equal(types.I1) {
+					// Add type assertion to convert to *types.PointerType
+					if ptrType, ok := alloca.ElemType.(*types.PointerType); ok {
+						initValue = constant.NewNull(ptrType)
+					}
+				}
+			}
+		}
 		block.NewStore(initValue, alloca)
-
 		// Add the variable to the symbol table for the current scope
 		g.addSymbol(g.currentClassName, binding.Identifier.Value, alloca)
 	}
@@ -1121,6 +1139,25 @@ func (g *Generator) generateIfExpression(expr *ast.IfExpression) value.Value {
 		g.currentBlock.NewBr(mergeBlock)
 	}
 
+	// Ensure both values have the same type for the PHI node
+	if thenValue != nil && elseValue != nil {
+		// If one branch returns a pointer and the other returns an integer 0,
+		// convert the integer 0 to a null pointer of the appropriate type
+		if types.IsPointer(thenValue.Type()) &&
+			(elseValue.Type().Equal(types.I32) || elseValue.Type().Equal(types.I1)) {
+			// Convert integer 0 to null pointer of the same type as thenValue
+			if ptrType, ok := thenValue.Type().(*types.PointerType); ok {
+				elseValue = constant.NewNull(ptrType)
+			}
+		} else if types.IsPointer(elseValue.Type()) &&
+			(thenValue.Type().Equal(types.I32) || thenValue.Type().Equal(types.I1)) {
+			// Convert integer 0 to null pointer of the same type as elseValue
+			if ptrType, ok := elseValue.Type().(*types.PointerType); ok {
+				thenValue = constant.NewNull(ptrType)
+			}
+		}
+	}
+
 	// Merge block with PHI node
 	g.currentBlock = mergeBlock
 	phi := mergeBlock.NewPhi(
@@ -1396,5 +1433,39 @@ func (g *Generator) handleIsVoidExpression(expr *ast.IsVoidExpression) value.Val
 		castedExpr := g.currentBlock.NewBitCast(testExpr, types.NewPointer(types.I8))
 		nullPtr := constant.NewNull(types.NewPointer(types.I8))
 		return g.currentBlock.NewICmp(enum.IPredEQ, castedExpr, nullPtr)
+	}
+}
+
+func (g *Generator) generateUnaryExpression(expr *ast.UnaryExpression) value.Value {
+	operand := g.generateExpression(expr.Right)
+	if operand == nil {
+		return constant.NewInt(types.I32, 0)
+	}
+
+	switch expr.Operator {
+	case "not":
+		// Handle boolean not
+		if operand.Type().Equal(types.I1) {
+			return g.currentBlock.NewXor(operand, constant.NewInt(types.I1, 1))
+		}
+		// Convert non-boolean to boolean first
+		cmp := g.currentBlock.NewICmp(enum.IPredNE, operand, constant.NewInt(types.I32, 0))
+		return g.currentBlock.NewXor(cmp, constant.NewInt(types.I1, 1))
+
+	case "~":
+		// Handle numeric negation
+		if types.IsPointer(operand.Type()) {
+			// Convert pointer to integer first
+			operand = g.currentBlock.NewPtrToInt(operand, types.I32)
+		}
+		return g.currentBlock.NewSub(constant.NewInt(types.I32, 0), operand)
+
+	case "isvoid":
+		// Handle isvoid operator
+		return g.handleIsVoidExpression(&ast.IsVoidExpression{Expression: expr.Right})
+
+	default:
+		fmt.Printf("Warning: Unknown unary operator %s\n", expr.Operator)
+		return constant.NewInt(types.I32, 0)
 	}
 }

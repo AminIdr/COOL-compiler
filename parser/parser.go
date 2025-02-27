@@ -920,8 +920,8 @@ func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expres
 }
 
 // void + self + modules + linked list + string methods + type_name of int and string
-// parse of case ;;
 //fct + valeur
 //       0;  -- Default return value
 // SELF_TYPE
-//
+
+// New store
