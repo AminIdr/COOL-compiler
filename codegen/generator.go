@@ -3,7 +3,8 @@ package codegen
 import (
 	"cool-compiler/ast"
 	"fmt"
-	"sort" // Add this import
+	"sort"
+	"strings"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -44,12 +45,7 @@ func NewGenerator() *Generator {
 }
 
 func (g *Generator) createClassType(class *ast.Class) {
-	// Record inheritance relationship
 	if class.Parent != nil {
-		// IDR: Diro f semantic
-		if class.Parent.Value == "Int" {
-			panic(fmt.Sprintf("Class %s cannot inherit from Int", class.Name.Value))
-		}
 		g.classInheritance[class.Name.Value] = class.Parent.Value
 	} else {
 		g.classInheritance[class.Name.Value] = "Object"
@@ -96,13 +92,86 @@ func (g *Generator) createClassType(class *ast.Class) {
 }
 
 func (g *Generator) generateClassMethods(class *ast.Class) {
-	g.generateConstructor(class)
+
+	constructorName := fmt.Sprintf("%s_init", class.Name.Value)
+	if g.getFunction(constructorName) == nil {
+		g.generateConstructor(class)
+	}
+	// First, collect all methods from parent classes
+	inheritedMethods := make(map[string]*ir.Func)
+	currentClass := class.Name.Value
+	for currentClass != "Object" {
+		if parent, exists := g.classInheritance[currentClass]; exists {
+			// Look for methods in parent class
+			parentPrefix := parent + "_"
+			for _, fn := range g.module.Funcs {
+				if fnName := fn.Name(); strings.HasPrefix(fnName, parentPrefix) {
+					methodName := strings.TrimPrefix(fnName, parentPrefix)
+					// Only add if not already overridden
+					if _, exists := inheritedMethods[methodName]; !exists {
+						inheritedMethods[methodName] = fn
+					}
+				}
+			}
+			currentClass = parent
+		} else {
+			break
+		}
+	}
+
+	// Generate this class's methods
 	for _, feature := range class.Features {
 		if method, ok := feature.(*ast.Method); ok {
+			// Override inherited method if it exists
+			delete(inheritedMethods, method.Name.Value)
 			g.generateMethod(class.Name.Value, method)
 		}
 	}
+
+	// Create forwarding methods for inherited methods that weren't overridden
+	for methodName, inheritedMethod := range inheritedMethods {
+		if methodName != "init" {
+			g.generateForwardingMethod(class.Name.Value, methodName, inheritedMethod)
+		}
+	}
 }
+
+func (g *Generator) generateForwardingMethod(className, methodName string, inheritedMethod *ir.Func) {
+	// Create a new method with the same signature but for the child class
+	newMethodName := fmt.Sprintf("%s_%s", className, methodName)
+	params := make([]*ir.Param, len(inheritedMethod.Params))
+	paramTypes := make([]types.Type, len(inheritedMethod.Params))
+
+	// Create parameters with same types
+	for i, param := range inheritedMethod.Params {
+		paramTypes[i] = param.Type()
+		params[i] = ir.NewParam(param.Name(), param.Type())
+	}
+
+	// Create the forwarding method
+	newMethod := g.module.NewFunc(newMethodName, inheritedMethod.Sig.RetType, params...)
+	block := newMethod.NewBlock("")
+
+	// Cast 'self' to parent type if needed
+	self := params[0]
+	var castSelf value.Value
+	if self.Type() != inheritedMethod.Params[0].Type() {
+		castSelf = block.NewBitCast(self, inheritedMethod.Params[0].Type())
+	} else {
+		castSelf = self
+	}
+
+	// Forward the call to parent method
+	args := make([]value.Value, len(params))
+	args[0] = castSelf
+	for i := 1; i < len(params); i++ {
+		args[i] = params[i]
+	}
+
+	result := block.NewCall(inheritedMethod, args...)
+	block.NewRet(result)
+}
+
 func (g *Generator) generateConstructor(class *ast.Class) {
 	className := class.Name.Value
 	constructorName := fmt.Sprintf("%s_init", className)
@@ -1155,7 +1224,6 @@ func (g *Generator) generateObjectClass() {
 	block := abortFunc.NewBlock("")
 
 	callInst := block.NewCall(g.exitFunc, constant.NewInt(types.I32, 1))
-	fmt.Println("I am here")
 	callInst.Tail = enum.TailTail
 	block.NewUnreachable()
 
