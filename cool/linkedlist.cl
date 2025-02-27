@@ -90,7 +90,7 @@ class Main {
         let list : LinkedList <- new LinkedList in {
             list.init_list();
             -- Insert a lot of values (for example, 1 through 100)
-            let i : Int <- 1 in {
+            let i : Int <- 1 in {   
                 while i <= 10 loop {
                     list.insert(i);
                     i <- i + 1;

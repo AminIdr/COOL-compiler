@@ -1,111 +1,109 @@
-class Node {
-    value : Int;
-    next  : Node;
+class Animal {
+    name : String;
 
-    get_value() : Int {
-        value
-    };
-
-    set_value(v : Int) : Node {
+    init(n : String) : Animal {
         {
-            value <- v;
+            name <- n;
             self;
         }
     };
 
-    get_next() : Node {
-        next
-    };
-
-    set_next(n : Node) : Node {
+    setName(n : String) : Animal {
         {
-            next <- n;
+            name <- n;
             self;
         }
+       
     };
 
-    init_node() : Node {
-        {
-            value <- 0;
-            next <- self;
-            self;
-        }
+    getName() : String {
+        name
+    };
+    
+    print() : Object {
+        out_string("this is an animal \n")
     };
 };
 
-class LinkedList inherits IO {
-    head : Node;
+class Dog inherits Animal {
+    breed : String;
 
-    -- Initialize the list with a sentinel node.
-    init_list() : LinkedList {
+    init(n : String) : Dog {
         {
-            head <- new Node;
-            head.init_node();
+            name <- n;
             self;
         }
     };
 
-    insert(val : Int) : LinkedList {
-        let new_node : Node <- new Node in {
-            new_node.set_value(val);
-            new_node.set_next(head.get_next());
-            head.set_next(new_node);
-            self;
-        }
+    getBreed() : String {
+        breed
     };
-
-    print() : LinkedList {
-        let temp : Node <- head.get_next() in {
-            while not (temp = head) loop {
-                out_int(temp.get_value());
-                out_string(" ");
-                temp <- temp.get_next();
-            } pool;
-            out_string("\n");
-            self;
-        }
-    };
-
-    -- Search for a value in the list. Returns true if found, false otherwise.
-    search(val : Int) : Bool {
-        let temp : Node <- head.get_next() in {
-            let found : Bool <- false in {
-                while not (temp = head) loop {
-                    if temp.get_value() = val then {
-                        found <- true;
-                        -- Break the loop by setting temp to head.
-                        temp <- head;
-                    } else {
-                        temp <- temp.get_next();
-                    }fi;
-                } pool;
-                found;
-            };
-        }
+    print() : Object {
+        out_string("this is a dog \n")
     };
 };
 
 class Main {
+   a : Animal;
+    b : Int;
+    c : String;
+    e : Bool;
+    d : Int;
+    f:String;
+
+    sum (i : Int, j : Int, t: Int) : Int {
+        i + j + t
+    };
+
     main() : Object {
-        let list : LinkedList <- new LinkedList in {
-            list.init_list();
-            -- Insert a lot of values (for example, 1 through 100)
-            let i : Int <- 1 in {
-                while i <= 10 loop {
-                    list.insert(i);
-                    i <- i + 1;
-                } pool;
+        {
+        
+            out_string(d.type_name());
+            out_string("\n");
+            d <- 10;
+
+            let myDog : Dog <- new Dog in {
+                out_string("myDog's name is ");
+                myDog.setName("Max");
+                out_string("\n");
+                let dog2 : Dog <- myDog.copy() in {
+                    out_string(dog2.getName());
+                };
+                out_string("\n");
+                out_string("myDog's breed is ");
+                out_string(myDog.getBreed());
+                out_string("\n");  
+
             };
-            list.print();
-            out_string("Enter a value to search: ");
-            let search_val : Int <- in_int() in {
-                if list.search(search_val) then
-                    out_string("Value found.\n")
-                else
-                    out_string("Value not found.\n")
-                fi;
-            };
-            self;
+            b <- 5;
+            while (b < 7) loop
+                b <- b + 1
+            pool;
+            out_string("b is ");
+            out_string(b.type_name());
+            out_string(" and its value is ");
+            out_int(b);
+            c <- "Imane";
+            f<- " Fjer";
+            out_string(c.concat(f));
+            c <- c.substr(2, 3);
+
+            if (b = 10) then
+                out_string("b is indeed 10")
+            else
+            {
+out_string("b is not 10");
+                out_int(c.length());
+            }
+            fi;
+                        case b of
+                dog : Dog => out_string("b is a dog");
+                animal : Animal => out_string("b is an animal");
+                int : Int  => out_string("b is an andsimal");
+                object: Object => out_string("b is unknown");
+            esac;
+            if true then out_string("b is unknown")  else out_string("b is an animal")fi ;
+            
         }
     };
 };

@@ -50,10 +50,11 @@ class Main {
     e : Bool;
     d : Int;
     f:String;
+
     sum (i : Int, j : Int, t: Int) : Int {
         i + j + t
-       
     };
+
     main() : Object {
         {
         
@@ -61,7 +62,7 @@ class Main {
             out_string("\n");
             d <- 10;
 
-            let myDog : Dog <- (new Dog).init("Buddy") in {
+            let myDog : Dog <- new Dog in {
                 out_string("myDog's name is ");
                 myDog.setName("Max");
                 out_string("\n");
