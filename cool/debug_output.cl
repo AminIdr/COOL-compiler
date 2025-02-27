@@ -15,6 +15,11 @@ class Main {
           b : Animal => out_string("Two\n");
           c : Int => out_string("Three\n");
         esac;
+        case x of
+          a : String => out_string("One\n");
+          b : Animal => out_string("Two\n");
+          c : Int => out_string("Three\n");
+        esac;
         out_string("Inside\n");
       };
       out_string("Outside");

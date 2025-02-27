@@ -23,6 +23,7 @@ type Generator struct {
 	ioInstance       value.Value
 	ifCounter        int
 	whileCounter     int
+	caseCounter      int
 	classInheritance map[string]string   // Maps class name to parent class name
 	classFields      map[string][]string // Maps class name to field names in order
 	mallocFunc       *ir.Func
@@ -37,6 +38,7 @@ func NewGenerator() *Generator {
 		symbolTable:      make(map[string]map[string]value.Value),
 		ifCounter:        0,
 		whileCounter:     0,
+		caseCounter:      0,
 		classInheritance: make(map[string]string),
 		classFields:      make(map[string][]string),
 		typeStrings:      make(map[string]value.Value),
@@ -557,13 +559,16 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 
 		// Generate the static method call
 		return g.currentBlock.NewCall(method, args...)
-
 	case *ast.CaseExpression:
 		// Generate test expression
 		test := g.generateExpression(e.Expression)
 		if test == nil {
 			return constant.NewNull(types.NewPointer(types.I8))
 		}
+
+		// Increment counter for unique block names
+		g.caseCounter++
+		currentCase := g.caseCounter
 
 		// Get the type of the test expression
 		var typeStr value.Value
@@ -597,7 +602,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		sortedBranches := g.sortBranchesBySpecificity(e.Cases)
 
 		// Create merge block for final result
-		mergeBlock := g.currentFunc.NewBlock("case.merge")
+		mergeBlock := g.currentFunc.NewBlock(fmt.Sprintf("case.merge.%d", currentCase))
 
 		// Create PHI node for collecting results
 		incomingValues := []value.Value{}
@@ -609,8 +614,8 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		// Generate branches
 		var nextBlock *ir.Block
 		for i, branch := range sortedBranches {
-			caseBlock := g.currentFunc.NewBlock(fmt.Sprintf("case.%d", i))
-			nextBlock = g.currentFunc.NewBlock(fmt.Sprintf("case.next.%d", i))
+			caseBlock := g.currentFunc.NewBlock(fmt.Sprintf("case.%d.%d", currentCase, i))
+			nextBlock = g.currentFunc.NewBlock(fmt.Sprintf("case.next.%d.%d", currentCase, i))
 
 			// Compare types
 			branchTypeStr := g.createStringConstant(branch.TypeIdentifier.Value)
@@ -645,7 +650,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		}
 
 		// Handle no-match case (abort)
-		abortBlock := g.currentFunc.NewBlock("case.abort")
+		abortBlock := g.currentFunc.NewBlock(fmt.Sprintf("case.abort.%d", currentCase))
 		currentBlock.NewBr(abortBlock)
 		g.currentBlock = abortBlock
 
