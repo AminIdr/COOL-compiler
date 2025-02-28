@@ -49,10 +49,6 @@ func (i *Importer) ProcessFile(filePath string) (string, error) {
 	// Add main file's content last
 	result += moduleInfo.Content
 
-	debugPath := filepath.Join(filepath.Dir(absolutePath), "debug_output.cl")
-	if err := os.WriteFile(debugPath, []byte(result), 0644); err != nil {
-		return "", fmt.Errorf("failed to write debug file: %v", err)
-	}
 	return result, nil
 }
 

@@ -1,4 +1,4 @@
-class Main {
+class Main inherits IO{
     a:Int;
     main(): Object{
         {
@@ -7,7 +7,7 @@ class Main {
                 a <- a + 1;
                 while (a < 8) loop {out_int(a); a <- a+2;} pool;
             } pool;
-            out_string("ererere");
+            out_string("End");
         }
     };
 };

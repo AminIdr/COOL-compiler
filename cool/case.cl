@@ -1,4 +1,4 @@
-class Animal {
+class Animal inherits IO{
     say_hello() : String {
         {
             out_string("I am an animal\n");
@@ -6,7 +6,7 @@ class Animal {
     };
 };
 
-class Main {
+class Main inherits IO{
   main(): Object {
     {
       let x:Int <- 5 in {

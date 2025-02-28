@@ -36,8 +36,9 @@ class Dog inherits Animal {
     };
 
     getBreed() : String {
-        breed
+        breed     
     };
+
     print() : Object {
         out_string("this is a dog \n")
     };
@@ -63,47 +64,9 @@ class Main {
             d <- 10;
 
             let myDog : Dog <- new Dog in {
-                out_string("myDog's name is ");
-                myDog.setName("Max");
-                out_string("\n");
-                let dog2 : Dog <- myDog.copy() in {
-                    out_string(dog2.getName());
-                };
-                out_string("\n");
-                out_string("myDog's breed is ");
                 out_string(myDog.getBreed());
-                out_string("\n");  
 
             };
-            b <- 5;
-            while (b < 7) loop
-                b <- b + 1
-            pool;
-            out_string("b is ");
-            out_string(b.type_name());
-            out_string(" and its value is ");
-            out_int(b);
-            c <- "Imane";
-            f<- " Fjer";
-            out_string(c.concat(f));
-            c <- c.substr(2, 3);
-
-            if (b = 10) then
-                out_string("b is indeed 10")
-            else
-            {
-out_string("b is not 10");
-                out_int(c.length());
-            }
-            fi;
-                        case b of
-                dog : Dog => out_string("b is a dog");
-                animal : Animal => out_string("b is an animal");
-                int : Int  => out_string("b is an andsimal");
-                object: Object => out_string("b is unknown");
-            esac;
-            if true then out_string("b is unknown")  else out_string("b is an animal")fi ;
-            
-        }
-    };
+    }
+};
 };

@@ -197,17 +197,12 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 	// Initialize class attributes
 	for _, feature := range class.Features {
 		if attr, ok := feature.(*ast.Attribute); ok {
-			// Debug logging
-			fmt.Printf("Initializing attribute %s in class %s\n", attr.Name.Value, className)
-
 			// Find the field index in the class
 			fieldIdx, symbolExists := g.getSymbol(className, attr.Name.Value)
 			if !symbolExists {
 				fmt.Printf("Warning: Symbol %s not found in class %s\n", attr.Name.Value, className)
 				continue
 			}
-
-			fmt.Printf("Field index for %s: %v\n", attr.Name.Value, fieldIdx)
 
 			// Get pointer to the field
 			fieldPtr := block.NewGetElementPtr(g.classes[className], self,
@@ -235,14 +230,10 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 			} else {
 				// Default initialization
 				initValue = g.getDefaultValueForType(attr.Type.Value)
-				fmt.Printf("Using default value for %s: %v\n", attr.Name.Value, initValue)
 			}
 
 			// Handle type conversion if needed
 			targetType := fieldPtr.Type().(*types.PointerType).ElemType
-			fmt.Printf("Target type for %s: %v, init value type: %v\n",
-				attr.Name.Value, targetType, initValue.Type())
-
 			if !initValue.Type().Equal(targetType) {
 				if types.IsPointer(targetType) && types.IsPointer(initValue.Type()) {
 					initValue = block.NewBitCast(initValue, targetType)
@@ -251,13 +242,10 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 				} else if types.IsPointer(targetType) && initValue.Type().Equal(types.I32) {
 					initValue = block.NewIntToPtr(initValue, targetType)
 				}
-				fmt.Printf("After conversion, init value for %s: %v (type: %v)\n",
-					attr.Name.Value, initValue, initValue.Type())
 			}
 
 			// Store the value in the field
 			block.NewStore(initValue, fieldPtr)
-			fmt.Printf("Stored value for %s at %v\n", attr.Name.Value, fieldPtr)
 		}
 	}
 
@@ -643,8 +631,6 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 			className = "Object" // Default to Object if we can't determine the class
 		}
 
-		fmt.Printf("Dispatch: Looking for method %s in class %s\n", e.Method.Value, className)
-
 		// Find the method in the class hierarchy
 		methodName, found := g.findMethodInHierarchy(className, e.Method.Value)
 		if !found {
@@ -652,8 +638,6 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 				e.Method.Value, className)
 			return constant.NewNull(types.NewPointer(types.I8))
 		}
-
-		fmt.Printf("Found method: %s\n", methodName)
 
 		// Look up the method
 		method := g.getFunction(methodName)

@@ -1,4 +1,4 @@
-class Main {
+class Main inherits IO{
     factorial(n: Int): Int {
         if (n = 0) then 
             1 
@@ -8,7 +8,7 @@ class Main {
     };
     
     main(): Object {
-        let num: Int <- 55 in
+        let num: Int <- 5 in
             out_int(factorial(num))
     };
 };

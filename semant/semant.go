@@ -59,11 +59,13 @@ func (sa *SemanticAnalyser) Errors() []string {
 }
 
 func (sa *SemanticAnalyser) Analyze(program *ast.Program) {
-	// Add Main class check before other analyses
+	// Check for Main class
 	foundMain := false
+	var mainClass *ast.Class
 	for _, class := range program.Classes {
 		if class.Name.Value == "Main" {
 			foundMain = true
+			mainClass = class
 			break
 		}
 	}
@@ -73,10 +75,24 @@ func (sa *SemanticAnalyser) Analyze(program *ast.Program) {
 		return // Early return since this is a critical error
 	}
 
+	// Check for main method in Main class
+	foundMainMethod := false
+	for _, feature := range mainClass.Features {
+		if method, ok := feature.(*ast.Method); ok {
+			if method.Name.Value == "main" {
+				foundMainMethod = true
+				break
+			}
+		}
+	}
+
+	if !foundMainMethod {
+		sa.errors = append(sa.errors, "Main class does not contain a main method")
+	}
+
 	sa.buildClassesSymboltables(program)
 	sa.buildInheritanceGraph(program)
 	sa.buildSymboltables(program)
-	sa.checkIOMethodRestrictions(program)
 	sa.typeCheck(program)
 }
 
@@ -109,6 +125,8 @@ func (sa *SemanticAnalyser) typeCheckAttribute(attribute *ast.Attribute, st *Sym
 }
 
 func (sa *SemanticAnalyser) typeCheckMethod(method *ast.Method, st *SymbolTable) {
+	fmt.Printf("Typechecking method: %s\n", method.Name.Value) // Add debug log
+
 	methodSt := st.symbols[method.Name.Value].Scope
 
 	// Create new scope for method parameters and body
@@ -167,6 +185,9 @@ func (sa *SemanticAnalyser) isTypeConformant(type1, type2 string) bool {
 }
 
 func (sa *SemanticAnalyser) getExpressionType(expression ast.Expression, st *SymbolTable) string {
+	fmt.Printf("Processing expression of type: %T\n", expression)
+	fmt.Printf("Expression details: %+v\n", expression)
+
 	switch e := expression.(type) {
 	case *ast.IntegerLiteral:
 		return "Int"
@@ -194,6 +215,10 @@ func (sa *SemanticAnalyser) getExpressionType(expression ast.Expression, st *Sym
 		return sa.GetCaseExpressionType(e, st)
 	case *ast.StaticDispatchExpression:
 		return sa.GetStaticDispatchExpressionType(e, st)
+	case *ast.DispatchExpression:
+		return sa.GetDispatchExpressionType(e, st)
+	case *ast.CallExpression:
+		return sa.GetCallExpressionType(e, st)
 	case *ast.IsVoidExpression:
 		return "Bool"
 	default:
@@ -588,45 +613,6 @@ func (sa *SemanticAnalyser) findLCA(type1, type2 string) string {
 	}
 }
 
-func (sa *SemanticAnalyser) inheritsFromIO(className string) bool {
-	current := className
-	for current != "Object" {
-		if current == "IO" {
-			return true
-		}
-		parent, exists := sa.inheritanceGraph[current]
-		if !exists {
-			return false
-		}
-		current = parent
-	}
-	return false
-}
-
-func (sa *SemanticAnalyser) checkIOMethodRestrictions(program *ast.Program) {
-	ioMethods := map[string]bool{
-		"out_string": true,
-		"in_string":  true,
-		"out_int":    true,
-		"in_int":     true,
-	}
-
-	for _, class := range program.Classes {
-		inheritsFromIO := sa.inheritsFromIO(class.Name.Value)
-
-		for _, feature := range class.Features {
-			if method, ok := feature.(*ast.Method); ok {
-				methodName := method.Name.Value
-				if ioMethods[methodName] && !inheritsFromIO {
-					sa.errors = append(sa.errors, fmt.Sprintf(
-						"class %s uses IO method %s but does not inherit from IO",
-						class.Name.Value, methodName))
-				}
-			}
-		}
-	}
-}
-
 // In static dispatch, the static type to the left of “@”must conform to the type specified to the right of “@”
 func (sa *SemanticAnalyser) GetStaticDispatchExpressionType(sde *ast.StaticDispatchExpression, st *SymbolTable) string {
 	// Get the type of the object expression
@@ -686,4 +672,178 @@ func (sa *SemanticAnalyser) GetStaticDispatchExpressionType(sde *ast.StaticDispa
 
 	// Return the method's return type
 	return methodEntry.Method.Type.Value
+}
+func (sa *SemanticAnalyser) GetDispatchExpressionType(de *ast.DispatchExpression, st *SymbolTable) string {
+	// Get the type of the object being dispatched on
+	var objectType string
+	if de.Object == nil {
+		// Self dispatch - find the containing class
+		currentTable := st
+		for currentTable != nil && currentTable.parent != sa.globalSymbolTable {
+			currentTable = currentTable.parent
+		}
+
+		// If we found a class scope
+		if currentTable != nil && currentTable.parent == sa.globalSymbolTable {
+			// Find which class this symbol table belongs to
+			for className, entry := range sa.globalSymbolTable.symbols {
+				if entry.Scope == currentTable {
+					objectType = className
+					break
+				}
+			}
+		}
+
+		if objectType == "" {
+			sa.errors = append(sa.errors, "could not determine containing class for self dispatch")
+			return "Object"
+		}
+	} else {
+		objectType = sa.getExpressionType(de.Object, st)
+	}
+
+	// Look up the method in the object's class
+	classEntry, ok := sa.globalSymbolTable.Lookup(objectType)
+	if !ok || classEntry.Scope == nil {
+		sa.errors = append(sa.errors, fmt.Sprintf("cannot find class scope for type %s", objectType))
+		return "Object"
+	}
+
+	methodEntry, ok := classEntry.Scope.Lookup(de.Method.Value)
+	if !ok || methodEntry.Method == nil {
+		// Check in parent classes
+		current := objectType
+		found := false
+		for current != "" && current != "Object" {
+			parent, exists := sa.inheritanceGraph[current]
+			if !exists {
+				break
+			}
+
+			parentEntry, ok := sa.globalSymbolTable.Lookup(parent)
+			if ok && parentEntry.Scope != nil {
+				methodEntry, ok = parentEntry.Scope.Lookup(de.Method.Value)
+				if ok && methodEntry.Method != nil {
+					found = true
+					break
+				}
+			}
+			current = parent
+		}
+
+		if !found {
+			sa.errors = append(sa.errors, fmt.Sprintf("undefined method %s in type %s", de.Method.Value, objectType))
+			return "Object"
+		}
+	}
+
+	// Check argument count
+	if len(de.Arguments) != len(methodEntry.Method.Formals) {
+		sa.errors = append(sa.errors, fmt.Sprintf(
+			"wrong number of arguments for method %s: expected %d, got %d",
+			de.Method.Value, len(methodEntry.Method.Formals), len(de.Arguments)))
+		return methodEntry.Method.TypeDecl.Value
+	}
+
+	// Check argument types
+	for i, arg := range de.Arguments {
+		argType := sa.getExpressionType(arg, st)
+		formalType := methodEntry.Method.Formals[i].TypeDecl.Value
+		if !sa.isTypeConformant(argType, formalType) {
+			sa.errors = append(sa.errors, fmt.Sprintf(
+				"argument %d of method %s has wrong type: expected %s, got %s",
+				i+1, de.Method.Value, formalType, argType))
+		}
+	}
+
+	// Return the method's return type
+	return methodEntry.Method.TypeDecl.Value
+}
+
+func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *SymbolTable) string {
+	// For call expressions without an explicit object (e.g. foo()),
+	// the receiver is implicitly self
+
+	// Find the containing class scope
+	fmt.Println("Call expression")
+	currentTable := st
+	var classScope *SymbolTable
+	for currentTable != nil && currentTable.parent != sa.globalSymbolTable {
+		currentTable = currentTable.parent
+	}
+	classScope = currentTable
+
+	if classScope == nil {
+		sa.errors = append(sa.errors, "could not determine containing class for method call")
+		return "Object"
+	}
+
+	// Get the function name
+	var methodName string
+	switch fn := ce.Function.(type) {
+	case *ast.ObjectIdentifier:
+		methodName = fn.Value
+	default:
+		sa.errors = append(sa.errors, "invalid method call format")
+		return "Object"
+	}
+
+	// Look up the method in the current class scope
+	methodEntry, ok := classScope.Lookup(methodName)
+	if !ok || methodEntry.Method == nil {
+		// Check parent classes for the method
+		var className string
+		for name, entry := range sa.globalSymbolTable.symbols {
+			if entry.Scope == classScope {
+				className = name
+				break
+			}
+		}
+
+		// Walk up inheritance chain looking for method
+		current := className
+		found := false
+		for current != "" && current != "Object" {
+			parent, exists := sa.inheritanceGraph[current]
+			if !exists {
+				break
+			}
+
+			parentEntry, ok := sa.globalSymbolTable.Lookup(parent)
+			if ok && parentEntry.Scope != nil {
+				methodEntry, ok = parentEntry.Scope.Lookup(methodName)
+				if ok && methodEntry.Method != nil {
+					found = true
+					break
+				}
+			}
+			current = parent
+		}
+
+		if !found {
+			sa.errors = append(sa.errors, fmt.Sprintf("undefined method %s", methodName))
+			return "Object"
+		}
+	}
+
+	// Check argument count
+	if len(ce.Arguments) != len(methodEntry.Method.Formals) {
+		sa.errors = append(sa.errors, fmt.Sprintf(
+			"wrong number of arguments for method %s: expected %d, got %d",
+			methodName, len(methodEntry.Method.Formals), len(ce.Arguments)))
+		return methodEntry.Method.TypeDecl.Value
+	}
+
+	// Type check arguments
+	for i, arg := range ce.Arguments {
+		argType := sa.getExpressionType(arg, st)
+		formalType := methodEntry.Method.Formals[i].TypeDecl.Value
+		if !sa.isTypeConformant(argType, formalType) {
+			sa.errors = append(sa.errors, fmt.Sprintf(
+				"argument %d of method %s has wrong type: expected %s, got %s",
+				i+1, methodName, formalType, argType))
+		}
+	}
+
+	return methodEntry.Method.TypeDecl.Value
 }

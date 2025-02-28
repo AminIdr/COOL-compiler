@@ -1,6 +1,6 @@
 
 
-class Main {
+class Main inherits IO{
   main() : Object { 
     {
       out_string("Enter your string : ");

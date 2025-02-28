@@ -1,11 +1,11 @@
-class Main {
-    age:Int <- 6;
+class Main inherits IO{
+    age:Int <- 18;
 
     fct(): Object {
         out_int(age)
     };
 
-    main() : Object{
+    main() : SELF_TYPE {
         {
         out_int(age);
         age <- age + 3;
