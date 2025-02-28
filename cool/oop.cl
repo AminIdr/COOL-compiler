@@ -1,4 +1,4 @@
-class Animal {
+class Animal inherits IO{
     say_hello() : String {
         {
             out_string("I am an animal\n");
@@ -37,7 +37,7 @@ class Dobermann inherits Dog {
     }
   };
 };
-class Main {
+class Main inherits IO{
   hello(): Object {
     out_string("Hello World!\n")
   };

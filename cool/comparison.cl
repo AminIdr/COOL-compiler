@@ -1,4 +1,4 @@
-class Main {
+class Main inherits IO{
 
 main() : Object {
     let a : Int <- 3 in {

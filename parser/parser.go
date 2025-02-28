@@ -85,11 +85,6 @@ func (p *Parser) Errors() []string {
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
-
-	// Debug
-	// fmt.Printf("Token advance: current={%v:%v} at line %d col %d, peek={%v:%v}\n",
-	// 	p.curToken.Type, p.curToken.Literal, p.curToken.Line, p.curToken.Column,
-	// 	p.peekToken.Type, p.peekToken.Literal)
 }
 
 func (p *Parser) curTokenIs(t lexer.TokenType) bool {
@@ -129,10 +124,8 @@ func (p *Parser) ParseProgram() *ast.Program {
 	prog := &ast.Program{}
 
 	for !p.curTokenIs(lexer.EOF) {
-		// fmt.Printf("Parsing class at token: {%v:%v}\n", p.curToken.Type, p.curToken.Literal)
 		c := p.parseClass()
 		if c == nil {
-			// fmt.Printf("Failed to parse class\n")
 			return prog
 		}
 		prog.Classes = append(prog.Classes, c)
@@ -586,7 +579,6 @@ func (p *Parser) parseBlockExpression() ast.Expression {
 	p.nextToken() // move past LBRACE
 
 	for !p.curTokenIs(lexer.RBRACE) && !p.curTokenIs(lexer.EOF) {
-		// fmt.Println("Current Token is", p.curToken.Type)
 		expr := p.parseExpression(LOWEST)
 		if expr != nil {
 			block.Expressions = append(block.Expressions, expr)

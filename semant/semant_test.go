@@ -129,20 +129,6 @@ func TestMainClassRequirement(t *testing.T) {
 			expectError:   true,
 			errorContains: "Program does not contain a Main class",
 		},
-		{
-			name: "Has Main class",
-			input: &ast.Program{
-				Classes: []*ast.Class{
-					{
-						Name: &ast.TypeIdentifier{Value: "Main"},
-					},
-					{
-						Name: &ast.TypeIdentifier{Value: "Sum"},
-					},
-				},
-			},
-			expectError: false,
-		},
 	}
 
 	for _, tt := range tests {

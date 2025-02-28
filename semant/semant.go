@@ -125,7 +125,6 @@ func (sa *SemanticAnalyser) typeCheckAttribute(attribute *ast.Attribute, st *Sym
 }
 
 func (sa *SemanticAnalyser) typeCheckMethod(method *ast.Method, st *SymbolTable) {
-	fmt.Printf("Typechecking method: %s\n", method.Name.Value) // Add debug log
 
 	methodSt := st.symbols[method.Name.Value].Scope
 
@@ -185,8 +184,6 @@ func (sa *SemanticAnalyser) isTypeConformant(type1, type2 string) bool {
 }
 
 func (sa *SemanticAnalyser) getExpressionType(expression ast.Expression, st *SymbolTable) string {
-	fmt.Printf("Processing expression of type: %T\n", expression)
-	fmt.Printf("Expression details: %+v\n", expression)
 
 	switch e := expression.(type) {
 	case *ast.IntegerLiteral:
@@ -765,7 +762,6 @@ func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *Sy
 	// the receiver is implicitly self
 
 	// Find the containing class scope
-	fmt.Println("Call expression")
 	currentTable := st
 	var classScope *SymbolTable
 	for currentTable != nil && currentTable.parent != sa.globalSymbolTable {

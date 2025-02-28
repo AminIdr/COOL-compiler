@@ -1,4 +1,4 @@
-class Main {
+class Main inherits IO{
   hello(): Object {
     out_string("Hello World!\n")
   };

@@ -1,7 +1,7 @@
 
 
-class Main {
-    main() : Object {
-        out_striang("aaa")
+class Main inherits IO{
+    main() : SELF_TYPE {
+        out_string("aaa")
     };
 };

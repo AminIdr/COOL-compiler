@@ -436,7 +436,7 @@ It then can be imported directly in another file.
 ## Module
 ```cool
 module MyModule;
-class MyClass {
+class MyClass inherits IO{
     hello() :  Object{
         out_string("hello")
     };

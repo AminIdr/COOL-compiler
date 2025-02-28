@@ -1246,7 +1246,6 @@ func (g *Generator) Generate(program *ast.Program) *ir.Module {
 	return g.module
 }
 
-// Add this method to your Generator struct
 func (g *Generator) declareAllMethodsFirst(program *ast.Program) {
 	// First declare all methods with empty bodies
 	for _, class := range program.Classes {
@@ -1273,7 +1272,6 @@ func (g *Generator) declareAllMethodsFirst(program *ast.Program) {
 	}
 }
 
-// Add this helper function to find functions in the module
 func (g *Generator) getFunction(name string) *ir.Func {
 	for _, f := range g.module.Funcs {
 		if f.Name() == name {

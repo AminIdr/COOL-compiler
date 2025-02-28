@@ -1,4 +1,4 @@
-class Animal {
+class Animal inherits IO {
     say_hello() : String {
         {
             out_string("I am an Animal\n");
