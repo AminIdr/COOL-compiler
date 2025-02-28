@@ -337,12 +337,10 @@ func (p *Parser) parseAttribute() *ast.Attribute {
 
 	// Handle initialization if present
 	if p.curTokenIs(lexer.ASSIGN) {
-		p.nextToken() // move past ASSIGN
-		// attribute.Value = p.parseExpression(LOWEST)
-		p.parseExpression(LOWEST)
-
+		p.nextToken()
+		attribute.Init = p.parseExpression(LOWEST)
+		p.nextToken()
 	}
-
 	return attribute
 }
 
@@ -925,3 +923,4 @@ func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expres
 // SELF_TYPE
 
 // New store
+// attribute <- 20

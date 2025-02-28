@@ -204,9 +204,9 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 					fieldIdx)
 
 				var initValue value.Value
-				if attr.Expression != nil {
+				if attr.Init != nil {
 					g.currentBlock = block
-					initValue = g.generateExpression(attr.Expression)
+					initValue = g.generateExpression(attr.Init)
 				} else {
 					// Default initialization
 					switch attr.Type.Value {
@@ -232,6 +232,7 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 						initValue = block.NewBitCast(initValue, targetType)
 					}
 				}
+				fmt.Println("initValue: ", initValue)
 
 				block.NewStore(initValue, fieldPtr)
 			}
@@ -335,6 +336,30 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 
 		fmt.Printf("Warning: Object identifier '%s' not found\n", e.Value)
 		return constant.NewInt(types.I32, 0)
+
+	case *ast.Attribute:
+		// If an attribute is used as an expression, we need to:
+		// 1. Generate code for its initialization expression if it exists
+		// 2. Or return a default value if no initialization
+		if e.Init != nil {
+			return g.generateExpression(e.Init)
+		}
+
+		// Default values based on type
+		switch e.Type.Value {
+		case "Int":
+			return constant.NewInt(types.I32, 0)
+		case "Bool":
+			return constant.NewInt(types.I1, 0)
+		case "String":
+			return g.createStringConstant("")
+		default:
+			// For class types, return null pointer
+			if classType, ok := g.classes[e.Type.Value]; ok {
+				return constant.NewNull(types.NewPointer(classType))
+			}
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
 
 	case *ast.CallExpression:
 		// Get function to call

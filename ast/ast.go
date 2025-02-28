@@ -62,13 +62,14 @@ type Attribute struct {
 	Name  *ObjectIdentifier
 	Type  *TypeIdentifier
 	// IDR semant
-	Expression Expression
-	TypeDecl   TypeIdentifier
+	// Expression Expression
+	TypeDecl TypeIdentifier
+	Init     Expression
 }
 
 func (a *Attribute) TokenLiteral() string { return a.Name.Value }
 func (a *Attribute) featureNode()         {}
-
+func (a *Attribute) expressionNode()      {} // Add this method to implement the Expression interface
 type Method struct {
 	Name    *ObjectIdentifier
 	Type    *TypeIdentifier

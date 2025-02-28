@@ -2,62 +2,134 @@ package parser
 
 import (
 	"cool-compiler/ast"
-	"fmt"
+	"strconv"
 	"strings"
 )
 
-func SerializeExpression(exp ast.Expression) string {
-	switch node := exp.(type) {
+// SerializeExpression converts an AST expression into a string representation
+func SerializeExpression(expr ast.Expression) string {
+	if expr == nil {
+		return ""
+	}
+
+	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
-		return fmt.Sprintf("%d", node.Value)
+		return strconv.FormatInt(e.Value, 10)
 	case *ast.StringLiteral:
-		return fmt.Sprintf("%q", node.Value)
+		return `"` + e.Value + `"`
 	case *ast.BooleanLiteral:
-		return fmt.Sprintf("%t", node.Value)
+		if e.Value {
+			return "true"
+		}
+		return "false"
 	case *ast.ObjectIdentifier:
-		return node.Value
+		return e.Value
 	case *ast.UnaryExpression:
-		return fmt.Sprintf("(%s %s)", node.Operator, SerializeExpression(node.Right))
+		return "(" + e.Operator + " " + SerializeExpression(e.Right) + ")"
 	case *ast.BinaryExpression:
-		return fmt.Sprintf("(%s %s %s)", SerializeExpression(node.Left), node.Operator, SerializeExpression(node.Right))
+		return "(" + SerializeExpression(e.Left) + " " + e.Operator + " " + SerializeExpression(e.Right) + ")"
 	case *ast.IfExpression:
-		return fmt.Sprintf("if %s then %s else %s fi", SerializeExpression(node.Condition), SerializeExpression(node.Consequence), SerializeExpression(node.Alternative))
+		return "if " + SerializeExpression(e.Condition) + " then " +
+			SerializeExpression(e.Consequence) + " else " +
+			SerializeExpression(e.Alternative) + " fi"
 	case *ast.WhileExpression:
-		return fmt.Sprintf("while %s loop %s pool", SerializeExpression(node.Condition), SerializeExpression(node.Body))
+		return "while " + SerializeExpression(e.Condition) + " loop " +
+			SerializeExpression(e.Body) + " pool"
 	case *ast.BlockExpression:
-		var sb strings.Builder
-		sb.WriteString("{ ")
-		for i, expr := range node.Expressions {
-			sb.WriteString(SerializeExpression(expr))
-			if i < len(node.Expressions)-1 {
-				sb.WriteString("; ")
+		var result strings.Builder
+		result.WriteString("{")
+		for i, expr := range e.Expressions {
+			if i > 0 {
+				result.WriteString(" ")
 			}
+			result.WriteString(SerializeExpression(expr))
+			result.WriteString(";")
 		}
-		sb.WriteString(" }")
-		return sb.String()
+		result.WriteString("}")
+		return result.String()
 	case *ast.LetExpression:
-		var sb strings.Builder
-		sb.WriteString("let ")
-		for i, binding := range node.Bindings {
-			sb.WriteString(binding.Identifier.Value)
-			sb.WriteString(" : ")
-			sb.WriteString(binding.Type.Value)
-			if binding.Init != nil {
-				sb.WriteString(" <- ")
-				sb.WriteString(SerializeExpression(binding.Init))
+		var result strings.Builder
+		result.WriteString("let ")
+		for i, binding := range e.Bindings {
+			if i > 0 {
+				result.WriteString(", ")
 			}
-			if i < len(node.Bindings)-1 {
-				sb.WriteString(", ")
+			result.WriteString(binding.Identifier.Value)
+			result.WriteString(":")
+			result.WriteString(binding.Type.Value)
+			if binding.Init != nil {
+				result.WriteString(" <- ")
+				result.WriteString(SerializeExpression(binding.Init))
 			}
 		}
-		sb.WriteString(" in ")
-		sb.WriteString(SerializeExpression(node.In))
-		return sb.String()
+		result.WriteString(" in ")
+		result.WriteString(SerializeExpression(e.In))
+		return result.String()
 	case *ast.NewExpression:
-		return fmt.Sprintf("new %s", node.Type.Value)
+		return "new " + e.Type.Value
 	case *ast.IsVoidExpression:
-		return fmt.Sprintf("isvoid %s", SerializeExpression(node.Expression))
+		return "isvoid " + SerializeExpression(e.Expression)
+	case *ast.Assignment:
+		return "(" + e.Name + " <- " + SerializeExpression(e.Expression) + ")"
+	case *ast.CaseExpression:
+		var result strings.Builder
+		result.WriteString("case ")
+		result.WriteString(SerializeExpression(e.Expression))
+		result.WriteString(" of")
+		for _, c := range e.Cases {
+			result.WriteString(" ")
+			result.WriteString(c.ObjectIdentifier.Value)
+			result.WriteString(":")
+			result.WriteString(c.TypeIdentifier.Value)
+			result.WriteString(" => ")
+			result.WriteString(SerializeExpression(c.Body))
+			result.WriteString(";")
+		}
+		result.WriteString(" esac")
+		return result.String()
+	case *ast.DispatchExpression:
+		var result strings.Builder
+		result.WriteString(SerializeExpression(e.Object))
+		result.WriteString(".")
+		result.WriteString(e.Method.Value)
+		result.WriteString("(")
+		for i, arg := range e.Arguments {
+			if i > 0 {
+				result.WriteString(", ")
+			}
+			result.WriteString(SerializeExpression(arg))
+		}
+		result.WriteString(")")
+		return result.String()
+	case *ast.StaticDispatchExpression:
+		var result strings.Builder
+		result.WriteString(SerializeExpression(e.Object))
+		result.WriteString("@")
+		result.WriteString(e.StaticType.Value)
+		result.WriteString(".")
+		result.WriteString(e.Method.Value)
+		result.WriteString("(")
+		for i, arg := range e.Arguments {
+			if i > 0 {
+				result.WriteString(", ")
+			}
+			result.WriteString(SerializeExpression(arg))
+		}
+		result.WriteString(")")
+		return result.String()
+	case *ast.CallExpression:
+		var result strings.Builder
+		result.WriteString(SerializeExpression(e.Function))
+		result.WriteString("(")
+		for i, arg := range e.Arguments {
+			if i > 0 {
+				result.WriteString(", ")
+			}
+			result.WriteString(SerializeExpression(arg))
+		}
+		result.WriteString(")")
+		return result.String()
 	default:
-		return fmt.Sprintf("%t", node)
+		return "unknown expression"
 	}
 }

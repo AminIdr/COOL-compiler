@@ -34,7 +34,6 @@ const (
 	NEW
 	OF
 	NOT
-	SELF_TYPE // IDR
 
 	// Data types
 	STR_CONST
@@ -65,6 +64,7 @@ const (
 	DOT    // .
 	AT     // @
 	NEG    // ~
+	SELF_TYPE
 )
 
 func (tt TokenType) String() string {
