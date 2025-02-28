@@ -205,6 +205,7 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 
 				var initValue value.Value
 				if attr.Init != nil {
+					fmt.Println("attr.Init != nil")
 					g.currentBlock = block
 					initValue = g.generateExpression(attr.Init)
 				} else {
@@ -233,7 +234,6 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 					}
 				}
 				fmt.Println("initValue: ", initValue)
-
 				block.NewStore(initValue, fieldPtr)
 			}
 		}
@@ -241,35 +241,50 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 
 	block.NewRet(self)
 }
+
 func (g *Generator) generateMethod(className string, method *ast.Method) {
 	g.currentClassName = className
 	returnType := g.convertType(method.Type.Value)
 
-	// Create function
+	// Create function name
 	funcName := className + "_" + method.Name.Value
-	fn := g.module.NewFunc(funcName, returnType)
 
-	// Add self parameter
-	selfParam := ir.NewParam("self", types.NewPointer(g.classes[className]))
-	fn.Params = append(fn.Params, selfParam)
+	// Check if function already exists - THIS IS THE KEY FIX
+	existingFunc := g.getFunction(funcName)
+	var fn *ir.Func
 
-	// Add other parameters
-	for _, formal := range method.Formals {
-		param := ir.NewParam(formal.Name.Value, g.convertType(formal.Type.Value))
-		fn.Params = append(fn.Params, param)
+	if existingFunc != nil {
+		// Use the existing function
+		fn = existingFunc
+	} else {
+		// Create a new function if it doesn't exist
+		fn = g.module.NewFunc(funcName, returnType)
+
+		// Add self parameter
+		selfParam := ir.NewParam("self", types.NewPointer(g.classes[className]))
+		fn.Params = append(fn.Params, selfParam)
+
+		// Add other parameters
+		for _, formal := range method.Formals {
+			param := ir.NewParam(formal.Name.Value, g.convertType(formal.Type.Value))
+			fn.Params = append(fn.Params, param)
+		}
 	}
 
 	// Store current function
 	g.currentFunc = fn
 
-	// Generate function body
-	block := fn.NewBlock("")
-	g.currentBlock = block
-	result := g.generateExpression(method.Expression)
+	// Only generate function body if the function doesn't have blocks yet
+	if len(fn.Blocks) == 0 {
+		// Generate function body
+		block := fn.NewBlock("")
+		g.currentBlock = block
+		result := g.generateExpression(method.Expression)
 
-	// Add return instruction if not already present
-	if g.currentBlock.Term == nil {
-		g.handleReturnValue(result, returnType)
+		// Add return instruction if not already present
+		if g.currentBlock.Term == nil {
+			g.handleReturnValue(result, returnType)
+		}
 	}
 }
 
@@ -1082,6 +1097,7 @@ func (g *Generator) Generate(program *ast.Program) *ir.Module {
 
 	// Generate IO methods
 	g.generateIOMethods()
+	g.declareAllMethodsFirst(program)
 
 	// Second pass: generate methods
 	for _, class := range program.Classes {
@@ -1089,11 +1105,37 @@ func (g *Generator) Generate(program *ast.Program) *ir.Module {
 			g.generateClassMethods(class)
 		}
 	}
-
 	// Generate main function last
 	g.generateMainFunction(program.Classes)
 
 	return g.module
+}
+
+// Add this method to your Generator struct
+func (g *Generator) declareAllMethodsFirst(program *ast.Program) {
+	// First declare all methods with empty bodies
+	for _, class := range program.Classes {
+		for _, feature := range class.Features {
+			if method, ok := feature.(*ast.Method); ok {
+				// Create function signature
+				funcName := class.Name.Value + "_" + method.Name.Value
+				returnType := g.convertType(method.Type.Value)
+
+				// Create function with parameters but no body yet
+				fn := g.module.NewFunc(funcName, returnType)
+
+				// Add self parameter
+				selfParam := ir.NewParam("self", types.NewPointer(g.classes[class.Name.Value]))
+				fn.Params = append(fn.Params, selfParam)
+
+				// Add other parameters
+				for _, formal := range method.Formals {
+					param := ir.NewParam(formal.Name.Value, g.convertType(formal.Type.Value))
+					fn.Params = append(fn.Params, param)
+				}
+			}
+		}
+	}
 }
 
 // Add this helper function to find functions in the module
