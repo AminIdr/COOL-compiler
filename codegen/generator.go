@@ -173,7 +173,6 @@ func (g *Generator) generateForwardingMethod(className, methodName string, inher
 	result := block.NewCall(inheritedMethod, args...)
 	block.NewRet(result)
 }
-
 func (g *Generator) generateConstructor(class *ast.Class) {
 	className := class.Name.Value
 	constructorName := fmt.Sprintf("%s_init", className)
@@ -198,48 +197,88 @@ func (g *Generator) generateConstructor(class *ast.Class) {
 	// Initialize class attributes
 	for _, feature := range class.Features {
 		if attr, ok := feature.(*ast.Attribute); ok {
-			if fieldIdx, exists := g.getSymbol(className, attr.Name.Value); exists {
-				fieldPtr := block.NewGetElementPtr(g.classes[className], self,
-					constant.NewInt(types.I32, 0),
-					fieldIdx)
+			// Debug logging
+			fmt.Printf("Initializing attribute %s in class %s\n", attr.Name.Value, className)
 
-				var initValue value.Value
-				if attr.Init != nil {
-					fmt.Println("attr.Init != nil")
-					g.currentBlock = block
-					initValue = g.generateExpression(attr.Init)
-				} else {
-					// Default initialization
-					switch attr.Type.Value {
-					case "Int":
-						initValue = constant.NewInt(types.I32, 0)
-					case "Bool":
-						initValue = constant.NewInt(types.I1, 0)
-					case "String":
-						initValue = g.createStringConstant("")
-					default:
-						if classType, ok := g.classes[attr.Type.Value]; ok {
-							initValue = constant.NewNull(types.NewPointer(classType))
-						} else {
-							initValue = constant.NewNull(types.NewPointer(types.I8))
-						}
-					}
-				}
-
-				// Handle type conversion if needed
-				targetType := fieldPtr.Type().(*types.PointerType).ElemType
-				if !initValue.Type().Equal(targetType) {
-					if types.IsPointer(targetType) && types.IsPointer(initValue.Type()) {
-						initValue = block.NewBitCast(initValue, targetType)
-					}
-				}
-				fmt.Println("initValue: ", initValue)
-				block.NewStore(initValue, fieldPtr)
+			// Find the field index in the class
+			fieldIdx, symbolExists := g.getSymbol(className, attr.Name.Value)
+			if !symbolExists {
+				fmt.Printf("Warning: Symbol %s not found in class %s\n", attr.Name.Value, className)
+				continue
 			}
+
+			fmt.Printf("Field index for %s: %v\n", attr.Name.Value, fieldIdx)
+
+			// Get pointer to the field
+			fieldPtr := block.NewGetElementPtr(g.classes[className], self,
+				constant.NewInt(types.I32, 0),
+				fieldIdx)
+
+			var initValue value.Value
+
+			if attr.Init != nil {
+				// Explicitly set current block, className, and func for proper context
+				g.currentBlock = block
+				g.currentClassName = className
+				g.currentFunc = constructor
+
+				// Generate the initialization expression
+				initValue = g.generateExpression(attr.Init)
+				fmt.Printf("Init value generated for %s: %v (type: %v)\n",
+					attr.Name.Value, initValue, initValue.Type())
+
+				if initValue == nil {
+					fmt.Printf("Warning: Init expression for %s returned nil\n", attr.Name.Value)
+					// Fall back to default initialization
+					initValue = g.getDefaultValueForType(attr.Type.Value)
+				}
+			} else {
+				// Default initialization
+				initValue = g.getDefaultValueForType(attr.Type.Value)
+				fmt.Printf("Using default value for %s: %v\n", attr.Name.Value, initValue)
+			}
+
+			// Handle type conversion if needed
+			targetType := fieldPtr.Type().(*types.PointerType).ElemType
+			fmt.Printf("Target type for %s: %v, init value type: %v\n",
+				attr.Name.Value, targetType, initValue.Type())
+
+			if !initValue.Type().Equal(targetType) {
+				if types.IsPointer(targetType) && types.IsPointer(initValue.Type()) {
+					initValue = block.NewBitCast(initValue, targetType)
+				} else if targetType.Equal(types.I32) && types.IsPointer(initValue.Type()) {
+					initValue = block.NewPtrToInt(initValue, types.I32)
+				} else if types.IsPointer(targetType) && initValue.Type().Equal(types.I32) {
+					initValue = block.NewIntToPtr(initValue, targetType)
+				}
+				fmt.Printf("After conversion, init value for %s: %v (type: %v)\n",
+					attr.Name.Value, initValue, initValue.Type())
+			}
+
+			// Store the value in the field
+			block.NewStore(initValue, fieldPtr)
+			fmt.Printf("Stored value for %s at %v\n", attr.Name.Value, fieldPtr)
 		}
 	}
 
 	block.NewRet(self)
+}
+
+// Helper method to get default values based on type
+func (g *Generator) getDefaultValueForType(typeName string) value.Value {
+	switch typeName {
+	case "Int":
+		return constant.NewInt(types.I32, 0)
+	case "Bool":
+		return constant.NewInt(types.I1, 0)
+	case "String":
+		return g.createStringConstant("")
+	default:
+		if classType, ok := g.classes[typeName]; ok {
+			return constant.NewNull(types.NewPointer(classType))
+		}
+		return constant.NewNull(types.NewPointer(types.I8))
+	}
 }
 
 func (g *Generator) generateMethod(className string, method *ast.Method) {
@@ -926,25 +965,46 @@ func (g *Generator) addSymbol(className, name string, value value.Value) {
 func (g *Generator) getSymbol(className, name string) (value.Value, bool) {
 	if table, ok := g.symbolTable[className]; ok {
 		if val, exists := table[name]; exists {
-			// fmt.Printf("Found symbol %s in class %s\n", name, className)
+			fmt.Printf("Found symbol %s in class %s\n", name, className)
 			return val, true
 		}
 	}
-	// fmt.Printf("Symbol %s not found in class %s\n", name, className)
+	fmt.Printf("Symbol %s not found in class %s\n", name, className)
 
 	return nil, false
 }
-
 func (g *Generator) generateMainFunction(classes []*ast.Class) {
 	// Create main function
 	mainFn := g.module.NewFunc("main", types.I32)
 	block := mainFn.NewBlock("")
 
-	// Create Main class instance
-	mainInstance := g.module.NewGlobalDef("main_instance",
-		constant.NewZeroInitializer(g.classes["Main"]))
+	// Calculate proper size for Main object
+	mainType, ok := g.classes["Main"].(*types.StructType)
+	if !ok {
+		fmt.Println("Error: Main is not a struct type")
+		return
+	}
 
-	// Call Main_main function
+	// Count the number of fields in Main (including inherited)
+	fieldCount := len(mainType.Fields)
+
+	// Allocate 8 bytes per field (accounting for pointers and alignment)
+	sizeInBytes := fieldCount * 8
+	size := constant.NewInt(types.I32, int64(sizeInBytes))
+
+	fmt.Printf("Allocating %d bytes for Main object with %d fields\n",
+		sizeInBytes, fieldCount)
+
+	mainMalloc := block.NewCall(g.mallocFunc, size)
+	mainInstance := block.NewBitCast(mainMalloc, types.NewPointer(g.classes["Main"]))
+
+	// Initialize the Main instance by calling its constructor
+	mainInit := g.getFunction("Main_init")
+	if mainInit != nil {
+		block.NewCall(mainInit, mainInstance)
+	}
+
+	// Call Main_main function with initialized instance
 	mainMain := g.getFunction("Main_main")
 	if mainMain != nil {
 		block.NewCall(mainMain, mainInstance)
