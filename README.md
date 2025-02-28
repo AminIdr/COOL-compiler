@@ -23,15 +23,6 @@ COOL is a small but powerful object-oriented language designed for teaching comp
 - Prevents circular dependencies
 - Maintains module hierarchy
 
-Example usage:
-```cool
-// main.cl
-module Main;
-import Animal;
-import Dog;
-
-class Main { ... }
-```
 
 ### 2. Lexical Analysis (`/lexer`)
 - Handles COOL lexical specifications:
@@ -59,27 +50,17 @@ class Main { ... }
 - Scope analysis
 - Name resolution
 - Features:
-  - Multiple inheritance support
   - Method dispatch resolution
   - Attribute initialization checking
 
 ### 5. Code Generation (`/codegen`)
 - Generates LLVM IR (Intermediate Representation)
-- Optimizations:
-  - Dead code elimination
-  - Constant folding
-  - Common subexpression elimination
-- Runtime support:
-  - Object creation
-  - Method dispatch tables
-  - Garbage collection interface
 
 ## Examples
 ### Example 1
-This program tests class attribute handling.
-Input COOL code (`attribute.cl`):
+Input COOL code (`attribute.cl`): This program tests class attribute handling.
 ```cool
-class Main {
+class Main inherits IO {
     age:Int <- 18;
 
     fct(): Object {
@@ -194,7 +175,7 @@ Output:
 ## Example 5
 
 Input COOL code (`isprime.cl`):
-This program makes a method call which returns an Int and adds a number to its return value.
+This program checks prime numbers smaller than a given number.
 ```cool
 class Main inherits IO {
    findPrimes(max : Int) : Object {
@@ -292,7 +273,7 @@ End
 ## Example 7
 
 Input COOL code (`OOP.cl`):
-This program demonstrates how OOP is handled through inheritance and polymorphism in the project.
+This program demonstrates how OOP is handled through inheritance and polymorphism in the project. It also demonstrates dynamic dispatch handling.
 ```cool
 class Animal {
     say_hello() : String {
@@ -366,7 +347,7 @@ Dobermann
 ## Example 8
 
 Input COOL code (`staticdispatch.cl`):
-This program makes a method call which returns an Int and adds a number to its return value.
+This program demonstrates how static dispatch is handled using @. 
 ```cool
 class Animal {
     say_hello() : String {
@@ -447,7 +428,9 @@ ine
 ```
 
 # Linked List Extension
-COOL has been extended with a linked list implementation that can be imported using the module system. It can be found in ./cool/MyLinkedList.cl
+COOL has been extended with a linked list implementation that can be imported using the module system. It can be found in ```cool
+./cool/MyLinkedList.cl
+```.
 It then can be imported directly in another file.
 # Module System
 ## Module
