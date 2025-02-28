@@ -428,7 +428,8 @@ ine
 ```
 
 # Linked List Extension
-COOL has been extended with a linked list implementation that can be imported using the module system. It can be found in ```cool
+COOL has been extended with a linked list implementation that can be imported using the module system. It can be found in
+```cool
 ./cool/MyLinkedList.cl
 ```.
 It then can be imported directly in another file.
