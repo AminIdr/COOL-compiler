@@ -275,7 +275,7 @@ End
 Input COOL code (`OOP.cl`):
 This program demonstrates how OOP is handled through inheritance and polymorphism in the project. It also demonstrates dynamic dispatch handling.
 ```cool
-class Animal {
+class Animal inherits IO{
     say_hello() : String {
         {
             out_string("I am an animal\n");
@@ -314,7 +314,7 @@ class Dobermann inherits Dog {
     }
   };
 };
-class Main {
+class Main inherits IO{
   hello(): Object {
     out_string("Hello World!\n")
   };
@@ -349,7 +349,7 @@ Dobermann
 Input COOL code (`staticdispatch.cl`):
 This program demonstrates how static dispatch is handled using @. 
 ```cool
-class Animal {
+class Animal inherits IO {
     say_hello() : String {
         {
             out_string("I am an Animal\n");
