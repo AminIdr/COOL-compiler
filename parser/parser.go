@@ -54,7 +54,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(lexer.ISVOID, p.parseIsVoidExpression)
 	p.registerPrefix(lexer.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(lexer.NOT, p.parsePrefixExpression)
-	// IDR
+
 	p.registerPrefix(lexer.NEG, p.parsePrefixExpression)
 	p.registerPrefix(lexer.LBRACE, p.parseBlockExpression)
 	p.registerPrefix(lexer.LET, p.parseLetExpression)
@@ -69,7 +69,6 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(lexer.LT, p.parseInfixExpression)
 	p.registerInfix(lexer.LE, p.parseInfixExpression)
 
-	// IDR
 	p.registerInfix(lexer.LPAREN, p.parseCallExpression)
 	p.registerInfix(lexer.AT, p.parseStaticDispatchExpression)
 	p.registerInfix(lexer.DOT, p.parseDispatchExpression)
@@ -335,7 +334,6 @@ func (p *Parser) parseAttribute() *ast.Attribute {
 		return nil
 	}
 
-	// IDR
 	p.nextToken()
 
 	// Handle initialization if present
@@ -454,7 +452,6 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 // 	return exp
 // }
 
-// IDR
 func (p *Parser) parseIfExpression() ast.Expression {
 	exp := &ast.IfExpression{Token: p.curToken}
 
@@ -505,7 +502,6 @@ func (p *Parser) parseIfExpression() ast.Expression {
 // 	return exp
 // }
 
-// IDR
 func (p *Parser) parseWhileExpression() ast.Expression {
 	exp := &ast.WhileExpression{Token: p.curToken}
 
@@ -922,8 +918,6 @@ func (p *Parser) parseStaticDispatchExpression(object ast.Expression) ast.Expres
 
 // void + self + modules + linked list + string methods + type_name of int and string
 //fct + valeur
-//       0;  -- Default return value
 // SELF_TYPE
 
 // New store
-// attribute <- 20

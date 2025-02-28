@@ -5,6 +5,8 @@ import (
 	"cool-compiler/importer"
 	"cool-compiler/lexer"
 	"cool-compiler/parser"
+	"cool-compiler/semant"
+
 	"flag"
 	"fmt"
 	"os"
@@ -12,7 +14,6 @@ import (
 )
 
 func main() {
-	// Add command line flags
 	inputFile := flag.String("i", "", "Input COOL source file")
 	outputFile := flag.String("o", "output.ll", "Output LLVM IR file")
 	flag.Parse()
@@ -49,6 +50,19 @@ func main() {
 	if len(p.Errors()) > 0 {
 		fmt.Println("Parsing errors:")
 		for _, err := range p.Errors() {
+			fmt.Printf("\t%s\n", err)
+		}
+		os.Exit(1)
+	}
+
+	fmt.Println("Performing semantic analysis...")
+	// Perform semantic analysis
+	analyzer := semant.NewSemanticAnalyser()
+	analyzer.Analyze(program)
+
+	if len(analyzer.Errors()) > 0 {
+		fmt.Println("Semantic errors:")
+		for _, err := range analyzer.Errors() {
 			fmt.Printf("\t%s\n", err)
 		}
 		os.Exit(1)

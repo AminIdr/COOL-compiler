@@ -41,7 +41,6 @@ func (oi *ObjectIdentifier) expressionNode()      {}
 
 type Program struct {
 	Classes []*Class
-	// IDR
 	Modules []*ModuleDeclaration
 	Imports []*ImportStatement
 }
@@ -61,20 +60,17 @@ type Attribute struct {
 	Token lexer.Token
 	Name  *ObjectIdentifier
 	Type  *TypeIdentifier
-	// IDR semant
-	// Expression Expression
 	TypeDecl TypeIdentifier
 	Init     Expression
 }
 
 func (a *Attribute) TokenLiteral() string { return a.Name.Value }
 func (a *Attribute) featureNode()         {}
-func (a *Attribute) expressionNode()      {} // Add this method to implement the Expression interface
+func (a *Attribute) expressionNode()      {} 
 type Method struct {
 	Name    *ObjectIdentifier
 	Type    *TypeIdentifier
 	Formals []*Formal
-	// IDR semant
 	Expression Expression
 	TypeDecl   TypeIdentifier
 }
@@ -83,7 +79,6 @@ func (m *Method) TokenLiteral() string { return m.Name.Value }
 func (m *Method) featureNode()         {}
 
 type Formal struct {
-	// IDR semant
 	Token lexer.Token
 
 	Name *ObjectIdentifier
@@ -210,7 +205,6 @@ type IsVoidExpression struct {
 func (ive *IsVoidExpression) expressionNode()      {}
 func (ive *IsVoidExpression) TokenLiteral() string { return ive.Token.Literal }
 
-// IDR
 
 type CaseExpression struct {
 	Token      lexer.Token
@@ -255,7 +249,7 @@ type Assignment struct {
 func (a *Assignment) expressionNode()      {}
 func (a *Assignment) TokenLiteral() string { return a.Token.Literal }
 
-// Add this method to the Assignment struct
+
 func (a *Assignment) String() string {
 	return fmt.Sprintf("Assignment{Name: %s}", a.Name)
 }

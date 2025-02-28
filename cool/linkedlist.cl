@@ -77,7 +77,7 @@ class LinkedList inherits IO {
                         temp <- head;
                     } else {
                         temp <- temp.get_next();
-                    }fi;
+                    } fi;
                 } pool;
                 found;
             };
@@ -85,7 +85,7 @@ class LinkedList inherits IO {
     };
 };
 
-class Main {
+class Main inherits IO{
     main() : Object {
         let list : LinkedList <- new LinkedList in {
             list.init_list();
