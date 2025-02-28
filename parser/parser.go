@@ -248,10 +248,13 @@ func (p *Parser) parseMethod() *ast.Method {
 	if !p.expectAndPeek(lexer.COLON) {
 		return nil
 	}
-	if !p.expectAndPeek(lexer.TYPEID) && !p.peekTokenIs(lexer.SELF_TYPE) {
+
+	if p.peekTokenIs(lexer.TYPEID) || p.peekTokenIs(lexer.SELF_TYPE) {
+		p.nextToken() // Advance to the type token
+	} else {
+		p.peekError(lexer.TYPEID) // Report an error expecting TYPEID
 		return nil
 	}
-
 	method.Type = &ast.TypeIdentifier{
 		Token: p.curToken,
 		Value: p.curToken.Literal,

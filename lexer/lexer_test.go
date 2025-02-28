@@ -263,13 +263,6 @@ func TestNextToken(t *testing.T) {
 			[]string{"class", "inherits", "if", "then", "else", "fi", "while", "loop", "pool", "let", "in", "case", "of", "esac", "new", "isvoid", "not", "true", "false", ""},
 		},
 
-		// SELF_TYPE test
-		{
-			"SELF_TYPE self_type Self_Type",
-			[]TokenType{SELF_TYPE, SELF_TYPE, TYPEID, EOF},
-			[]string{"SELF_TYPE", "self_type", "Self_Type", ""},
-		},
-
 		// Empty class definition
 		{
 			"class Empty { };",

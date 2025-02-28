@@ -1,19 +1,21 @@
+
+
 class Main {
-    age:Int <- 6;
-
-    fct(): Object {
-        out_int(age)
-    };
-
-    main() : Object{
-        {
-        out_int(age);
-        age <- age + 3;
-        out_int(age);
-        out_string("########\n");
-        fct();
-        }
-    };
-
-
+  y : String;
+  main() : Object { 
+    {
+      let x : String <- in_string() in {out_string("The string \"");
+      out_string(x);
+      out_string("\" is of length : ");
+      out_int(x.length());
+      out_string("Its type is : ");
+      out_string(x.type_name());
+      out_string("\n");
+      out_string(x.substr(2, 4));
+      out_string("\n");
+      y <- x.copy();
+      out_string(y);
+      };
+    }
+  };  
 };

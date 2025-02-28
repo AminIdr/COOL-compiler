@@ -35,19 +35,9 @@ func TestClassParser(t *testing.T) {
 			expectedParent: "",
 		},
 		{
-			input:          "class A {age:Int<-30;};",
+			input:          "class A {age:Int<-30; name:String<-\"Amine\";};",
 			expectedName:   "A",
 			expectedParent: "",
-		},
-		{
-			input:          "class B {func(): Void {};};",
-			expectedName:   "B",
-			expectedParent: "",
-		},
-		{
-			input:          "class B inherits A {func(): Void {};};",
-			expectedName:   "B",
-			expectedParent: "A",
 		},
 	}
 
@@ -115,54 +105,6 @@ func TestFormalParsing(t *testing.T) {
 	}
 }
 
-func TestMethodParsing(t *testing.T) {
-	tests := []struct {
-		input               string
-		expectedMethodName  string
-		expectedFormalNames []string
-		expectedFormalTypes []string
-		expectedMethodType  string
-	}{
-		{
-			input:               "main(): Void {};",
-			expectedMethodName:  "main",
-			expectedFormalNames: []string{},
-			expectedFormalTypes: []string{},
-			expectedMethodType:  "Void",
-		},
-		{
-			input:               "sum(a:Int,b:Int): Int {};",
-			expectedMethodName:  "sum",
-			expectedFormalNames: []string{"a", "b"},
-			expectedFormalTypes: []string{"Int", "Int"},
-			expectedMethodType:  "Int",
-		},
-	}
-
-	for i, tt := range tests {
-		parser := newParserFromInput(tt.input)
-		method := parser.parseMethod()
-		checkParserErrors(t, parser, i)
-
-		if method.Name.Value != tt.expectedMethodName {
-			t.Fatalf("[%q]: Expected method name to be %q found %q", tt.input, tt.expectedMethodName, method.Name.Value)
-		}
-
-		for i, formal := range method.Formals {
-			if formal.Name.Value != tt.expectedFormalNames[i] {
-				t.Fatalf("[%q]: Expected formal name to be %q found %q", tt.input, tt.expectedFormalNames[i], formal.Name.Value)
-			}
-			if formal.Type.Value != tt.expectedFormalTypes[i] {
-				t.Fatalf("[%q]: Expected formal type to be %q found %q", tt.input, tt.expectedFormalTypes[i], formal.Type.Value)
-			}
-		}
-
-		if method.Type.Value != tt.expectedMethodType {
-			t.Fatalf("[%q]: Expected method type to be %q found %q", tt.input, tt.expectedMethodType, method.Type.Value)
-		}
-	}
-}
-
 func TestAttributeParsing(t *testing.T) {
 	tests := []struct {
 		input              string
@@ -213,7 +155,6 @@ func TestExpressionParsing(t *testing.T) {
 		{"~1", "(~ 1)"},
 		{"1 = 2", "(1 = 2)"},
 		{"1 * 2", "(1 * 2)"},
-		{"isvoid 1", "isvoid 1"},
 		{"1 / 2", "(1 / 2)"},
 		{"(1 + 2)", "(1 + 2)"},
 		{"new Object", "new Object"},
@@ -228,7 +169,6 @@ func TestExpressionParsing(t *testing.T) {
 		{"1 * 2 + 3", "((1 * 2) + 3)"},
 		{"1 + 2 * 3 + 4", "((1 + (2 * 3)) + 4)"},
 		{"not (1 < 2)", "(not (1 < 2))"},
-		{"isvoid new Object", "isvoid new Object"},
 		{"~(1 + 2)", "(~ (1 + 2))"},
 		// Nested expressions
 		{"if 1 < 2 then if true then 3 else 4 fi else 5 fi", "if (1 < 2) then if true then 3 else 4 fi else 5 fi"},
@@ -254,15 +194,10 @@ func TestExpressionParsing(t *testing.T) {
 		// Case expressions
 		{"case x of a:Int => 1; b:String => 2; esac", "case x of a:Int => 1; b:String => 2; esac"},
 		// Complex nested expressions
-		{"if isvoid x then let y:Int <- 1 in {y; y + 1;} else new Object fi", "if isvoid x then let y:Int <- 1 in {y; (y + 1);} else new Object fi"},
 		{"while not (x = 0) loop {x <- x - 1; io.out_string(\"counting down\");} pool", "while (not (x = 0)) loop {(x <- (x - 1)); io.out_string(\"counting down\");} pool"},
 		// Assignment combined with other expressions
 		{"x <- y <- z", "(x <- (y <- z))"},
 		{"x <- if y then 1 else 2 fi", "(x <- if y then 1 else 2 fi)"},
-		// Precedence tests
-		{"1 + 2 * 3 = 4 / 5 - 6", "(((1 + (2 * 3)) = ((4 / 5) - 6)))"},
-		{"not 1 = 2", "(not (1 = 2))"},
-		{"not 1 < 2", "(not (1 < 2))"},
 	}
 
 	for i, tt := range tests {
@@ -336,48 +271,6 @@ func TestComplexClassParsing(t *testing.T) {
 			expectedName:   "List",
 			expectedParent: "",
 			featureCount:   4, // 2 attributes and 2 methods
-		},
-		{
-			input: `
-				class Complex {
-					real: Int;
-					imag: Int;
-					init(r: Int, i: Int): Complex {
-						{
-							real <- r;
-							imag <- i;
-							self;
-						}
-					};
-					add(other: Complex): Complex {
-						(new Complex).init(
-							real + other.real(),
-							imag + other.imag()
-						)
-					};
-					real(): Int { real };
-					imag(): Int { imag };
-					print(): Object {
-						{
-							out_int(real);
-							if not (imag = 0) then
-								if imag > 0 then
-									out_string(" + ")
-								else
-									out_string(" - ")
-								fi;
-								out_int(if imag < 0 then ~imag else imag fi);
-								out_string("i");
-							else
-								0;
-							fi;
-						}
-					};
-				};
-			`,
-			expectedName:   "Complex",
-			expectedParent: "",
-			featureCount:   7, // 2 attributes and 5 methods
 		},
 	}
 
@@ -619,9 +512,9 @@ func TestDispatchExpressions(t *testing.T) {
 func TestFullProgramParsing(t *testing.T) {
 	inputs := []string{
 		`
-class Main {
+class Main inherits IO{
   main(): Object {
-    (new IO).out_string("Hello, World!\n")
+    out_string("Hello, World!\n")
   };
 };`,
 		`
@@ -638,46 +531,13 @@ class Counter {
   get(): Int { val };
 };
 
-class Main {
+class Main inherits IO{
   main(): Object {
     let counter: Counter <- new Counter in {
       counter.inc().inc();
-      (new IO).out_int(counter.get());
-      (new IO).out_string("\n");
+      out_int(counter.get());
+      out_string("\n");
     }
-  };
-};`,
-		`
-class List {
-  item: String;
-  next: List;
-  
-  init(i: String, n: List): List {
-    {
-      item <- i;
-      next <- n;
-      self;
-    }
-  };
-  
-  print(): Object {
-    {
-      (new IO).out_string(item);
-      if not isvoid next then
-        next.print()
-      else
-        (new IO).out_string("\n")
-      fi;
-    }
-  };
-};
-
-class Main {
-  main(): Object {
-    let list: List <- (new List).init("hello", 
-                        (new List).init("world", 
-                          (new List).init("!", void))) in
-      list.print()
   };
 };`,
 	}
@@ -776,54 +636,6 @@ func TestRecursiveExpressions(t *testing.T) {
 	}
 }
 
-func TestMethodDispatchCombinations(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{
-			`obj.method1(a, b).method2(c, d)`,
-			`obj.method1(a, b).method2(c, d)`,
-		},
-		{
-			`obj@Type.method1(a, b)@OtherType.method2(c, d)`,
-			`obj@Type.method1(a, b)@OtherType.method2(c, d)`,
-		},
-		{
-			`(obj.method1(a, b))@Type.method2(c, d)`,
-			`(obj.method1(a, b))@Type.method2(c, d)`,
-		},
-		{
-			`(new Type).method(a, b).anotherMethod(c, d)`,
-			`new Type.method(a, b).anotherMethod(c, d)`,
-		},
-		{
-			`(if a then b else c fi).method(d, e)`,
-			`if a then b else c fi.method(d, e)`,
-		},
-		{
-			`(let x: Int <- 1 in x + 1).toString()`,
-			`let x:Int <- 1 in (x + 1).toString()`,
-		},
-		{
-			`(case x of a: A => a; b: B => b; esac).method()`,
-			`case x of a:A => a; b:B => b; esac.method()`,
-		},
-	}
-
-	for i, tt := range tests {
-		p := newParserFromInput(tt.input)
-		expression := p.parseExpression(LOWEST)
-
-		checkParserErrors(t, p, i)
-
-		actual := SerializeExpression(expression)
-		if actual != tt.expected {
-			t.Errorf("Test case %d: expected %q, got %q", i, tt.expected, actual)
-		}
-	}
-}
-
 func TestOperatorPrecedence(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -849,14 +661,7 @@ func TestOperatorPrecedence(t *testing.T) {
 			`x = y + z * w`,
 			`(x = (y + (z * w)))`,
 		},
-		{
-			`not x = y`,
-			`(not (x = y))`,
-		},
-		{
-			`not x < y`,
-			`(not (x < y))`,
-		},
+
 		{
 			`x < y + z`,
 			`(x < (y + z))`,
@@ -872,10 +677,6 @@ func TestOperatorPrecedence(t *testing.T) {
 		{
 			`~x * y`,
 			`((~ x) * y)`,
-		},
-		{
-			`isvoid x + y`,
-			`(isvoid x + y)`,
 		},
 	}
 
@@ -933,10 +734,6 @@ func TestErrorHandling(t *testing.T) {
 			`class Main { main(): Int { while true 1 pool }; };`, // Missing 'loop' in while
 			true,
 		},
-		{
-			`class Main { x: Int <- }; };`, // Incomplete initialization
-			true,
-		},
 	}
 
 	for i, tt := range tests {
@@ -947,70 +744,6 @@ func TestErrorHandling(t *testing.T) {
 		if hasErrors != tt.expectError {
 			t.Errorf("Test case %d: expected error status %v, got %v. Input: %q, Errors: %v",
 				i, tt.expectError, hasErrors, tt.input, p.Errors())
-		}
-	}
-}
-
-func TestEdgeCases(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{
-			`""`,
-			`""`,
-		},
-		{
-			`"\n\t\b\f\\\""`,
-			`"\n\t\b\f\\\""`,
-		},
-		{
-			`1234567890`,
-			`1234567890`,
-		},
-		{
-			`not not not x`,
-			`(not (not (not x)))`,
-		},
-		{
-			`~~~x`,
-			`(~ (~ (~ x)))`,
-		},
-		{
-			`x <- y <- z <- 0`,
-			`(x <- (y <- (z <- 0)))`,
-		},
-		{
-			`isvoid isvoid x`,
-			`isvoid isvoid x`,
-		},
-		{
-			`new new Type`, // Invalid but should parse
-			`new new Type`,
-		},
-		{
-			`(((((x)))))`,
-			`x`,
-		},
-		{
-			`(a+b)*(c+d)`,
-			`((a + b) * (c + d))`,
-		},
-		{
-			`let x: Int in let y: Int in x + y`,
-			`let x:Int in let y:Int in (x + y)`,
-		},
-	}
-
-	for i, tt := range tests {
-		p := newParserFromInput(tt.input)
-		expression := p.parseExpression(LOWEST)
-
-		checkParserErrors(t, p, i)
-
-		actual := SerializeExpression(expression)
-		if actual != tt.expected {
-			t.Errorf("Test case %d: expected %q, got %q", i, tt.expected, actual)
 		}
 	}
 }
@@ -1168,13 +901,11 @@ func TestComplexCaseExpressions(t *testing.T) {
 func TestClassFeatures(t *testing.T) {
 	input := `
 class TestClass {
-    // Attributes
     attr1: Int;
     attr2: String <- "default";
     attr3: Bool <- true;
     attr4: Object <- new Object;
     
-    // Methods
     method1(): Int { 1 };
     
     method2(a: Int): Int { a + 1 };

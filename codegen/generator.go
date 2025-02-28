@@ -359,7 +359,7 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		}
 		return constant.NewInt(types.I1, 0)
 	case *ast.StringLiteral:
-		return g.createStringConstant(e.Value)
+		return g.generateStringObject(e.Value)
 	case *ast.BinaryExpression:
 		return g.generateBinaryExpression(e)
 	case *ast.ObjectIdentifier:
@@ -570,29 +570,101 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 		}
 
 		return instance
-
 	case *ast.DispatchExpression:
 		// Generate code for the object
 		receiver := g.generateExpression(e.Object)
+		if receiver == nil {
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
 
 		// Determine class type of receiver
 		var className string
-		if ptrType, ok := receiver.Type().(*types.PointerType); ok {
-			if structType, ok := ptrType.ElemType.(*types.StructType); ok {
-				// Get class name from type - you'll need to maintain a reverse mapping
-				// from LLVM types to class names
-				className = g.getClassNameFromType(structType)
+		if types.IsPointer(receiver.Type()) {
+			if ptrType, ok := receiver.Type().(*types.PointerType); ok {
+				if structType, ok := ptrType.ElemType.(*types.StructType); ok {
+					// Get class name from type
+					className = g.getClassNameFromType(structType)
+				} else if ptrType.ElemType.Equal(types.I8) {
+					// Special case for string literals (pointer to I8)
+					className = "String"
+				}
 			}
+		} else if receiver.Type().Equal(types.I32) {
+			// Special case for Int
+			className = "Int"
+
+			// Create a proper Int object
+			intObj := g.currentBlock.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+			typedIntObj := g.currentBlock.NewBitCast(intObj, types.NewPointer(g.classes["Int"]))
+
+			// Set vtable pointer
+			vtablePtr := g.currentBlock.NewGetElementPtr(g.classes["Int"], typedIntObj,
+				constant.NewInt(types.I32, 0),
+				constant.NewInt(types.I32, 0))
+			typeStr := g.createStringConstant("Int")
+			g.currentBlock.NewStore(g.currentBlock.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+			// Set int value
+			valuePtr := g.currentBlock.NewGetElementPtr(g.classes["Int"], typedIntObj,
+				constant.NewInt(types.I32, 0),
+				constant.NewInt(types.I32, 1))
+			g.currentBlock.NewStore(receiver, valuePtr)
+
+			// Use the Int object as the receiver
+			receiver = typedIntObj
+		} else if receiver.Type().Equal(types.I1) {
+			// Special case for Bool
+			className = "Bool"
+
+			// Create a proper Bool object
+			boolObj := g.currentBlock.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+			typedBoolObj := g.currentBlock.NewBitCast(boolObj, types.NewPointer(g.classes["Bool"]))
+
+			// Set vtable pointer
+			vtablePtr := g.currentBlock.NewGetElementPtr(g.classes["Bool"], typedBoolObj,
+				constant.NewInt(types.I32, 0),
+				constant.NewInt(types.I32, 0))
+			typeStr := g.createStringConstant("Bool")
+			g.currentBlock.NewStore(g.currentBlock.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+			// Set bool value
+			valuePtr := g.currentBlock.NewGetElementPtr(g.classes["Bool"], typedBoolObj,
+				constant.NewInt(types.I32, 0),
+				constant.NewInt(types.I32, 1))
+			g.currentBlock.NewStore(receiver, valuePtr)
+
+			// Use the Bool object as the receiver
+			receiver = typedBoolObj
 		}
 
-		// Get the method name
-		methodName := fmt.Sprintf("%s_%s", className, e.Method.Value)
+		// If we couldn't determine class name, try to get it from vtable
+		if className == "" {
+			fmt.Printf("Warning: Could not determine class name for receiver type %v\n", receiver.Type())
+			className = "Object" // Default to Object if we can't determine the class
+		}
+
+		fmt.Printf("Dispatch: Looking for method %s in class %s\n", e.Method.Value, className)
+
+		// Find the method in the class hierarchy
+		methodName, found := g.findMethodInHierarchy(className, e.Method.Value)
+		if !found {
+			fmt.Printf("Error: Method %s not found in class %s or its ancestors\n",
+				e.Method.Value, className)
+			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		fmt.Printf("Found method: %s\n", methodName)
 
 		// Look up the method
 		method := g.getFunction(methodName)
 		if method == nil {
-			fmt.Printf("Error: Method %s not found in class %s\n", e.Method.Value, className)
+			fmt.Printf("Error: Method %s was found but function not generated\n", methodName)
 			return constant.NewNull(types.NewPointer(types.I8))
+		}
+
+		// Cast receiver to expected parameter type if needed
+		if !receiver.Type().Equal(method.Params[0].Type()) {
+			receiver = g.currentBlock.NewBitCast(receiver, method.Params[0].Type())
 		}
 
 		// Generate code for arguments
@@ -604,7 +676,6 @@ func (g *Generator) generateExpression(expr ast.Expression) value.Value {
 
 		// Generate the method call
 		return g.currentBlock.NewCall(method, args...)
-
 	case *ast.StaticDispatchExpression:
 		// Generate code for the object first
 		receiver := g.generateExpression(e.Object)
@@ -777,9 +848,8 @@ func (g *Generator) generateLetExpression(expr *ast.LetExpression) value.Value {
 
 		if binding.Init != nil {
 			if strLit, ok := binding.Init.(*ast.StringLiteral); ok {
-				// Create string constant and get pointer to first element
-				strConst := g.createStringConstant(strLit.Value)
-				initValue = block.NewBitCast(strConst, types.NewPointer(types.I8))
+				initValue = g.generateStringObject(strLit.Value)
+
 			} else {
 				initValue = g.generateExpression(binding.Init)
 			}
@@ -787,9 +857,7 @@ func (g *Generator) generateLetExpression(expr *ast.LetExpression) value.Value {
 			// Default initialization
 			switch binding.Type.Value {
 			case "String":
-				// Create empty string constant and get pointer to first element
-				strConst := g.createStringConstant("")
-				initValue = block.NewBitCast(strConst, types.NewPointer(types.I8))
+				initValue = g.generateStringObject("")
 			case "Int":
 				initValue = constant.NewInt(types.I32, 0)
 			case "Bool":
@@ -807,7 +875,6 @@ func (g *Generator) generateLetExpression(expr *ast.LetExpression) value.Value {
 		// Allocate space for the variable
 		varType := g.convertType(binding.Type.Value)
 		alloca := block.NewAlloca(varType)
-		// Check if types are compatible, if not perform appropriate conversion
 		// Check if types are compatible, if not perform appropriate conversion
 		if !initValue.Type().Equal(alloca.ElemType) {
 			if types.IsPointer(alloca.ElemType) && types.IsPointer(initValue.Type()) {
@@ -965,11 +1032,11 @@ func (g *Generator) addSymbol(className, name string, value value.Value) {
 func (g *Generator) getSymbol(className, name string) (value.Value, bool) {
 	if table, ok := g.symbolTable[className]; ok {
 		if val, exists := table[name]; exists {
-			fmt.Printf("Found symbol %s in class %s\n", name, className)
+			// fmt.Printf("Found symbol %s in class %s\n", name, className)
 			return val, true
 		}
 	}
-	fmt.Printf("Symbol %s not found in class %s\n", name, className)
+	// fmt.Printf("Symbol %s not found in class %s\n", name, className)
 
 	return nil, false
 }
@@ -991,9 +1058,6 @@ func (g *Generator) generateMainFunction(classes []*ast.Class) {
 	// Allocate 8 bytes per field (accounting for pointers and alignment)
 	sizeInBytes := fieldCount * 8
 	size := constant.NewInt(types.I32, int64(sizeInBytes))
-
-	fmt.Printf("Allocating %d bytes for Main object with %d fields\n",
-		sizeInBytes, fieldCount)
 
 	mainMalloc := block.NewCall(g.mallocFunc, size)
 	mainInstance := block.NewBitCast(mainMalloc, types.NewPointer(g.classes["Main"]))
@@ -1040,13 +1104,22 @@ func (g *Generator) generateIOMethods() {
 	// out_string implementation
 	outString := g.module.NewFunc("IO_out_string", types.NewPointer(g.classes["IO"]))
 	self := ir.NewParam("self", types.NewPointer(g.classes["IO"]))
-	str := ir.NewParam("x", types.NewPointer(types.I8))
-	outString.Params = append(outString.Params, self, str)
+	strObj := ir.NewParam("x", types.NewPointer(g.classes["String"]))
+	outString.Params = append(outString.Params, self, strObj)
 
 	block := outString.NewBlock("")
+
+	// Extract the actual string pointer from the String object
+	strDataPtr := block.NewGetElementPtr(g.classes["String"], strObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	strPtr := block.NewLoad(types.NewPointer(types.I8), strDataPtr)
+
+	// Call printf with the extracted string
 	format := g.createStringConstant("%s")
 	printf, _ := g.getSymbol("IO", "printf")
-	block.NewCall(printf, format, str)
+	block.NewCall(printf, format, strPtr)
+
 	// Add fflush call
 	fflush := g.module.NewFunc("fflush", types.I32, ir.NewParam("stream", types.NewPointer(types.I8)))
 	block.NewCall(fflush, constant.NewNull(types.NewPointer(types.I8)))
@@ -1064,7 +1137,7 @@ func (g *Generator) generateIOMethods() {
 	block.NewRet(self)
 
 	// in_string implementation
-	inString := g.module.NewFunc("IO_in_string", types.NewPointer(types.I8))
+	inString := g.module.NewFunc("IO_in_string", types.NewPointer(g.classes["String"]))
 	self = ir.NewParam("self", types.NewPointer(g.classes["IO"]))
 	inString.Params = append(inString.Params, self)
 
@@ -1082,8 +1155,25 @@ func (g *Generator) generateIOMethods() {
 	format = g.createStringConstant("%*c")
 	block.NewCall(scanf, format)
 
-	// Return the heap-allocated buffer
-	block.NewRet(buffer)
+	// Create a new String object
+	stringObj := block.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+	typedStringObj := block.NewBitCast(stringObj, types.NewPointer(g.classes["String"]))
+
+	// Set vtable pointer
+	vtablePtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("String")
+	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+	// Set string data pointer
+	dataPtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	block.NewStore(buffer, dataPtr)
+
+	// Return the String object
+	block.NewRet(typedStringObj)
 
 	// in_int implementation
 	inInt := g.module.NewFunc("IO_in_int", types.I32)
@@ -1135,6 +1225,7 @@ func (g *Generator) Generate(program *ast.Program) *ir.Module {
 
 	g.generateObjectClass()
 	g.generateIntClass()
+	g.generateBoolClass()
 	g.generateStringMethods()
 
 	// Declare IO functions first
@@ -1375,6 +1466,14 @@ func (g *Generator) findMethodInHierarchy(className, methodName string) (string,
 }
 
 func (g *Generator) generateObjectClass() {
+	if _, ok := g.classes["String"]; !ok {
+		// Create String class type with vtable pointer and string data
+		stringType := types.NewStruct(
+			types.NewPointer(types.I8), // vtable pointer
+			types.NewPointer(types.I8), // actual string data
+		)
+		g.classes["String"] = stringType
+	}
 	// Create Object class type with just vtable pointer
 	if g.mallocFunc == nil {
 		g.mallocFunc = g.module.NewFunc("malloc",
@@ -1396,8 +1495,7 @@ func (g *Generator) generateObjectClass() {
 	callInst.Tail = enum.TailTail
 	block.NewUnreachable()
 
-	// Generate type_name() method
-	typeNameFunc := g.module.NewFunc("Object_type_name", types.NewPointer(types.I8))
+	typeNameFunc := g.module.NewFunc("Object_type_name", types.NewPointer(g.classes["String"]))
 	self = ir.NewParam("self", types.NewPointer(g.classes["Object"]))
 	typeNameFunc.Params = append(typeNameFunc.Params, self)
 	block = typeNameFunc.NewBlock("")
@@ -1408,8 +1506,27 @@ func (g *Generator) generateObjectClass() {
 		constant.NewInt(types.I32, 0))
 
 	// Load the string pointer from vtable
-	typeName := block.NewLoad(types.NewPointer(types.I8), vtablePtr)
-	block.NewRet(typeName)
+	typeNameStr := block.NewLoad(types.NewPointer(types.I8), vtablePtr)
+
+	// Create a new String object directly
+	stringObj := block.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+	typedStringObj := block.NewBitCast(stringObj, types.NewPointer(g.classes["String"]))
+
+	// Set vtable pointer
+	vtableStrPtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("String")
+	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtableStrPtr)
+
+	// Set string data pointer
+	dataPtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	block.NewStore(typeNameStr, dataPtr)
+
+	// Return the String object
+	block.NewRet(typedStringObj)
 
 	// Generate copy() method
 	copyFunc := g.module.NewFunc("Object_copy", types.NewPointer(g.classes["Object"]))
@@ -1461,6 +1578,32 @@ func (g *Generator) generateIntClass() {
 	block.NewRet(self)
 }
 
+func (g *Generator) generateBoolClass() {
+	// Create Bool class type with just a value field and vtable pointer
+	boolType := types.NewStruct(
+		types.NewPointer(types.I8), // vtable pointer
+		types.I1,                   // value field
+	)
+	g.classes["Bool"] = boolType
+
+	// Store that Bool is a basic class that can't be inherited from
+	g.classInheritance["Bool"] = "Object"
+
+	// Generate constructor for Bool
+	boolInit := g.module.NewFunc("Bool_init", types.NewPointer(g.classes["Bool"]))
+	self := ir.NewParam("self", types.NewPointer(g.classes["Bool"]))
+	boolInit.Params = append(boolInit.Params, self)
+	block := boolInit.NewBlock("")
+
+	// Initialize value to false (0)
+	valuePtr := block.NewGetElementPtr(g.classes["Bool"], self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1)) // index 1 is the value field
+	block.NewStore(constant.NewInt(types.I1, 0), valuePtr)
+
+	block.NewRet(self)
+}
+
 func (g *Generator) generateStringMethods() {
 	// Create String class type with vtable pointer and string data
 	stringType := types.NewStruct(
@@ -1470,27 +1613,75 @@ func (g *Generator) generateStringMethods() {
 	g.classes["String"] = stringType
 	g.classInheritance["String"] = "Object"
 
+	// Store field names for String
+	g.classFields["String"] = []string{"vtable", "data"}
+
+	// Initialize symbol table for String class
+	g.initializeSymbolTable("String")
+	g.addSymbol("String", "data", constant.NewInt(types.I32, 1)) // Index of data field
+
+	// Generate constructor for String
+	stringInit := g.module.NewFunc("String_init", types.NewPointer(g.classes["String"]))
+	self := ir.NewParam("self", types.NewPointer(g.classes["String"]))
+	stringInit.Params = append(stringInit.Params, self)
+	block := stringInit.NewBlock("")
+
+	// Initialize vtable pointer with String type
+	vtablePtr := block.NewGetElementPtr(g.classes["String"], self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("String")
+	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+	// Initialize data to empty string
+	emptyStr := g.createStringConstant("")
+	dataPtr := block.NewGetElementPtr(g.classes["String"], self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	block.NewStore(block.NewBitCast(emptyStr, types.NewPointer(types.I8)), dataPtr)
+
+	block.NewRet(self)
+
 	// Generate length method
 	g.generateStringLength()
+
+	// Generate concat method
+	g.generateStringConcat()
+
+	// Generate substr method (optional implementation)
+	g.generateStringSubstr()
+}
+
+func (g *Generator) generateStringObject(value string) value.Value {
+	// Create the string constant first (raw C string)
+	strConst := g.createStringConstant(value)
+
+	// Allocate memory for String object (vtable ptr + string data ptr)
+	stringObj := g.currentBlock.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+	typedStringObj := g.currentBlock.NewBitCast(stringObj, types.NewPointer(g.classes["String"]))
+
+	// Set vtable pointer to indicate it's a String
+	vtablePtr := g.currentBlock.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("String")
+	g.currentBlock.NewStore(g.currentBlock.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+	// Set string data pointer
+	dataPtr := g.currentBlock.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	g.currentBlock.NewStore(g.currentBlock.NewBitCast(strConst, types.NewPointer(types.I8)), dataPtr)
+
+	return typedStringObj
 }
 
 func (g *Generator) generateStringLength() {
-	lengthFunc := g.module.NewFunc("String_length", types.NewPointer(g.classes["Int"]))
+	lengthFunc := g.module.NewFunc("String_length", types.I32)
 	self := ir.NewParam("self", types.NewPointer(g.classes["String"]))
 	lengthFunc.Params = append(lengthFunc.Params, self)
 
 	block := lengthFunc.NewBlock("")
-
-	// Create a new Int object
-	intObj := block.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16)) // size of Int (vtable + value)
-	typedIntObj := block.NewBitCast(intObj, types.NewPointer(g.classes["Int"]))
-
-	// Set vtable pointer for Int object
-	vtablePtr := block.NewGetElementPtr(g.classes["Int"], typedIntObj,
-		constant.NewInt(types.I32, 0),
-		constant.NewInt(types.I32, 0))
-	typeStr := g.createStringConstant("Int")
-	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
 
 	// Get string data pointer from self
 	strDataPtr := block.NewGetElementPtr(g.classes["String"], self,
@@ -1500,15 +1691,147 @@ func (g *Generator) generateStringLength() {
 
 	// Call strlen
 	strlenFunc := g.getFunction("strlen")
-	length := block.NewCall(strlenFunc, strPtr)
+	if strlenFunc == nil {
+		// If strlen function isn't found, create it
+		strlenFunc = g.module.NewFunc("strlen", types.I32,
+			ir.NewParam("str", types.NewPointer(types.I8)))
+		strlenFunc.Linkage = enum.LinkageExternal
+	}
 
-	// Store length in Int object
-	valuePtr := block.NewGetElementPtr(g.classes["Int"], typedIntObj,
+	length := block.NewCall(strlenFunc, strPtr)
+	block.NewRet(length)
+}
+
+func (g *Generator) generateStringConcat() {
+	concatFunc := g.module.NewFunc("String_concat", types.NewPointer(g.classes["String"]))
+	self := ir.NewParam("self", types.NewPointer(g.classes["String"]))
+	other := ir.NewParam("s", types.NewPointer(g.classes["String"]))
+	concatFunc.Params = append(concatFunc.Params, self, other)
+
+	block := concatFunc.NewBlock("")
+
+	// Get string data from self
+	selfDataPtr := block.NewGetElementPtr(g.classes["String"], self,
 		constant.NewInt(types.I32, 0),
 		constant.NewInt(types.I32, 1))
-	block.NewStore(length, valuePtr)
+	selfStr := block.NewLoad(types.NewPointer(types.I8), selfDataPtr)
 
-	block.NewRet(typedIntObj)
+	// Get string data from other
+	otherDataPtr := block.NewGetElementPtr(g.classes["String"], other,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	otherStr := block.NewLoad(types.NewPointer(types.I8), otherDataPtr)
+
+	// Get lengths
+	strlenFunc := g.getFunction("strlen")
+	selfLen := block.NewCall(strlenFunc, selfStr)
+	otherLen := block.NewCall(strlenFunc, otherStr)
+
+	// Calculate total length (+1 for null terminator)
+	totalLen := block.NewAdd(selfLen, otherLen)
+	allocSize := block.NewAdd(totalLen, constant.NewInt(types.I32, 1))
+
+	// Allocate buffer for concatenated string
+	buffer := block.NewCall(g.mallocFunc, allocSize)
+
+	// Copy first string
+	strcpyFunc := g.getFunction("strcpy")
+	if strcpyFunc == nil {
+		strcpyFunc = g.module.NewFunc("strcpy", types.NewPointer(types.I8),
+			ir.NewParam("dest", types.NewPointer(types.I8)),
+			ir.NewParam("src", types.NewPointer(types.I8)))
+		strcpyFunc.Linkage = enum.LinkageExternal
+	}
+	block.NewCall(strcpyFunc, buffer, selfStr)
+
+	// Concatenate second string
+	strcatFunc := g.getFunction("strcat")
+	if strcatFunc == nil {
+		strcatFunc = g.module.NewFunc("strcat", types.NewPointer(types.I8),
+			ir.NewParam("dest", types.NewPointer(types.I8)),
+			ir.NewParam("src", types.NewPointer(types.I8)))
+		strcatFunc.Linkage = enum.LinkageExternal
+	}
+	block.NewCall(strcatFunc, buffer, otherStr)
+
+	// Create new String object
+	newStringObj := block.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+	typedStringObj := block.NewBitCast(newStringObj, types.NewPointer(g.classes["String"]))
+
+	// Set vtable pointer
+	vtablePtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("String")
+	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+	// Set string data pointer
+	dataPtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	block.NewStore(buffer, dataPtr)
+
+	block.NewRet(typedStringObj)
+}
+
+func (g *Generator) generateStringSubstr() {
+	// Implementation for substring method
+	substrFunc := g.module.NewFunc("String_substr", types.NewPointer(g.classes["String"]))
+	self := ir.NewParam("self", types.NewPointer(g.classes["String"]))
+	i := ir.NewParam("i", types.I32)
+	l := ir.NewParam("l", types.I32)
+	substrFunc.Params = append(substrFunc.Params, self, i, l)
+
+	block := substrFunc.NewBlock("")
+
+	// Implement basic substring functionality
+	// You may want to add bounds checking in a complete implementation
+
+	// Get string data
+	dataPtr := block.NewGetElementPtr(g.classes["String"], self,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	strPtr := block.NewLoad(types.NewPointer(types.I8), dataPtr)
+
+	// Calculate position
+	pos := block.NewGetElementPtr(types.I8, strPtr, i)
+
+	// Allocate buffer for result (length + 1 for null terminator)
+	buffer := block.NewCall(g.mallocFunc, block.NewAdd(l, constant.NewInt(types.I32, 1)))
+
+	// Copy substring using strncpy
+	strncpyFunc := g.getFunction("strncpy")
+	if strncpyFunc == nil {
+		strncpyFunc = g.module.NewFunc("strncpy", types.NewPointer(types.I8),
+			ir.NewParam("dest", types.NewPointer(types.I8)),
+			ir.NewParam("src", types.NewPointer(types.I8)),
+			ir.NewParam("n", types.I32))
+		strncpyFunc.Linkage = enum.LinkageExternal
+	}
+	block.NewCall(strncpyFunc, buffer, pos, l)
+
+	// Ensure null termination
+	endPtr := block.NewGetElementPtr(types.I8, buffer, l)
+	block.NewStore(constant.NewInt(types.I8, 0), endPtr)
+
+	// Create new String object
+	newStringObj := block.NewCall(g.mallocFunc, constant.NewInt(types.I32, 16))
+	typedStringObj := block.NewBitCast(newStringObj, types.NewPointer(g.classes["String"]))
+
+	// Set vtable pointer
+	vtablePtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 0))
+	typeStr := g.createStringConstant("String")
+	block.NewStore(block.NewBitCast(typeStr, types.NewPointer(types.I8)), vtablePtr)
+
+	// Set string data pointer
+	newDataPtr := block.NewGetElementPtr(g.classes["String"], typedStringObj,
+		constant.NewInt(types.I32, 0),
+		constant.NewInt(types.I32, 1))
+	block.NewStore(buffer, newDataPtr)
+
+	block.NewRet(typedStringObj)
 }
 
 func (g *Generator) sortBranchesBySpecificity(branches []*ast.Case) []*ast.Case {
