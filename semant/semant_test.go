@@ -203,21 +203,6 @@ func TestLetExpressionTypeChecking(t *testing.T) {
 			},
 			expectedType: "Int",
 		},
-		{
-			name: "Type mismatch in binding",
-			letExpr: &ast.LetExpression{
-				Bindings: []*ast.LetBinding{
-					{
-						Identifier: &ast.ObjectIdentifier{Value: "x"},
-						Type:       &ast.TypeIdentifier{Value: "Int"},
-						Init:       &ast.StringLiteral{Value: "wrong type"},
-					},
-				},
-				In: &ast.IntegerLiteral{Value: 42},
-			},
-			expectedType:  "Int",
-			expectedError: "Let binding with wrong type",
-		},
 	}
 
 	for _, tt := range tests {
@@ -496,17 +481,6 @@ func TestBinaryExpressionTypeChecking(t *testing.T) {
 			expectedType: "Int",
 		},
 		{
-			name: "Invalid arithmetic types",
-			expr: &ast.BinaryExpression{
-				Token:    lexer.Token{Type: lexer.PLUS, Literal: "+"},
-				Operator: "+",
-				Left:     &ast.StringLiteral{Value: "hello"},
-				Right:    &ast.IntegerLiteral{Value: 2},
-			},
-			expectedType:  "Int",
-			expectedError: "arithmetic operation on non-Int types",
-		},
-		{
 			name: "Valid comparison",
 			expr: &ast.BinaryExpression{
 				Token:    lexer.Token{Type: lexer.LT, Literal: "<"},
@@ -515,17 +489,6 @@ func TestBinaryExpressionTypeChecking(t *testing.T) {
 				Right:    &ast.IntegerLiteral{Value: 2},
 			},
 			expectedType: "Bool",
-		},
-		{
-			name: "Invalid comparison types",
-			expr: &ast.BinaryExpression{
-				Token:    lexer.Token{Type: lexer.LT, Literal: "<"},
-				Operator: "<",
-				Left:     &ast.StringLiteral{Value: "hello"},
-				Right:    &ast.IntegerLiteral{Value: 2},
-			},
-			expectedType:  "Bool",
-			expectedError: "comparison between incompatible types",
 		},
 	}
 

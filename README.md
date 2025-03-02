@@ -60,14 +60,14 @@ COOL is a small but powerful object-oriented language designed for teaching comp
 ### Example 1
 Input COOL code (`attribute.cl`): This program tests class attribute handling.
 ```cool
-class Main inherits IO {
+class Main inherits IO{
     age:Int <- 18;
 
-    fct(): Object {
+    fct(): SELF_TYPE {
         out_int(age)
     };
 
-    main() : Object{
+    main() : SELF_TYPE {
         {
         out_int(age);
         age <- age + 3;
@@ -76,6 +76,8 @@ class Main inherits IO {
         fct();
         }
     };
+
+
 };
 ```
 Output:
@@ -113,7 +115,7 @@ Input COOL code (`case.cl`):
 This program tests the functionality of case expression.
 ```cool
 class Animal inherits IO{
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am an animal\n");
         }
@@ -121,7 +123,7 @@ class Animal inherits IO{
 };
 
 class Main inherits IO{
-  main(): Object {
+  main(): SELF_TYPE {
     {
       let x:Int <- 5 in {
         case x of
@@ -158,7 +160,7 @@ class Main inherits IO{
         fi
     };
     
-    main(): Object {
+    main(): SELF_TYPE {
         let num: Int <- 5 in
             out_int(factorial(num))
     };
@@ -216,7 +218,7 @@ class Main inherits IO {
 
    main() : Object {
       {
-         out_string("Prime numbers up to 30:\n");
+         out_string("Prime numbers up to 30: ");
          findPrimes(30);
       }
    };
@@ -246,7 +248,7 @@ This program tests nested while loops.
 ```cool
 class Main inherits IO{
     a:Int;
-    main(): Object{
+    main(): SELF_TYPE{
         {
             a <- 0;
             while a < 10 loop{
@@ -276,12 +278,12 @@ Input COOL code (`OOP.cl`):
 This program demonstrates how OOP is handled through inheritance and polymorphism in the project. It also demonstrates dynamic dispatch handling.
 ```cool
 class Animal inherits IO{
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am an animal\n");
         }
     };
-    custom_animal(): String {
+    custom_animal(): SELF_TYPE {
       {
            out_string("Method of Animal\n");
       }
@@ -289,12 +291,12 @@ class Animal inherits IO{
 };
 
 class Dog inherits Animal {
-  say_hello(): String{
+  say_hello(): SELF_TYPE{
     {
       out_string("I am a dog\n");
     }
   };
-  custom_dog(): String{
+  custom_dog(): SELF_TYPE{
     {
       out_string("Method of Dog\n");
     }
@@ -303,19 +305,19 @@ class Dog inherits Animal {
 
 
 class Dobermann inherits Dog {
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am a Dobermann\n");
         }
     };
-      custom_dobermann(): String{
+      custom_dobermann(): SELF_TYPE{
     {
       out_string("Method of Dobermann\n");
     }
   };
 };
 class Main inherits IO{
-  hello(): Object {
+  hello(): SELF_TYPE {
     out_string("Hello World!\n")
   };
 
@@ -327,7 +329,6 @@ class Main inherits IO{
     }
   };
 };
-
 ```
 Output:
 ```cool
@@ -350,7 +351,7 @@ Input COOL code (`staticdispatch.cl`):
 This program demonstrates how static dispatch is handled using @. 
 ```cool
 class Animal inherits IO {
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am an Animal\n");
         }
@@ -358,7 +359,7 @@ class Animal inherits IO {
 };
 
 class Dog inherits Animal {
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am a Dog\n");
         }
@@ -366,7 +367,7 @@ class Dog inherits Animal {
 };
 
 class Dobermann inherits Dog {
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am a Dobermann\n");
         }
@@ -400,8 +401,6 @@ I am an Animal
 Input COOL code (`string.cl`):
 This program demonstrates how methods of String class are implemented.
 ```cool
-
-
 class Main inherits IO{
   main() : Object { 
     {

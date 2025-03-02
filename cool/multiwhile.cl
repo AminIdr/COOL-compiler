@@ -1,6 +1,6 @@
 class Main inherits IO{
     a:Int;
-    main(): Object{
+    main(): SELF_TYPE{
         {
             a <- 0;
             while a < 10 loop{

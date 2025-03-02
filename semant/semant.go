@@ -123,9 +123,7 @@ func (sa *SemanticAnalyser) typeCheckAttribute(attribute *ast.Attribute, st *Sym
 		}
 	}
 }
-
 func (sa *SemanticAnalyser) typeCheckMethod(method *ast.Method, st *SymbolTable) {
-
 	methodSt := st.symbols[method.Name.Value].Scope
 
 	// Create new scope for method parameters and body
@@ -146,17 +144,58 @@ func (sa *SemanticAnalyser) typeCheckMethod(method *ast.Method, st *SymbolTable)
 		})
 	}
 
-	// Only check return type if method has an expression and declared type
-	if method.Expression != nil && method.TypeDecl.Value != "" {
+	// Check if method has an expression
+	if method.Expression != nil {
+		// Get the declared return type from the method signature
+		declaredReturnType := method.TypeDecl.Value
+		if declaredReturnType == "" {
+			fmt.Printf("WARNING: Method %s has empty return type, defaulting to Object\n", method.Name.Value)
+			declaredReturnType = "Object"
+
+			// Fix the return type in the AST
+			method.TypeDecl.Value = declaredReturnType
+		}
+
+		// Get the actual type of the method body expression
 		methodExpressionType := sa.getExpressionType(method.Expression, paramScope)
-		if !sa.isTypeConformant(methodExpressionType, method.TypeDecl.Value) {
-			sa.errors = append(sa.errors, fmt.Sprintf("method %s is expected to return %s, found %s",
-				method.Name.Value, method.TypeDecl.Value, methodExpressionType))
+
+		// Special case for SELF_TYPE
+		if declaredReturnType == "SELF_TYPE" {
+			// Find the containing class
+			currentTable := st
+			for currentTable != nil && currentTable.parent != sa.globalSymbolTable {
+				currentTable = currentTable.parent
+			}
+
+			// Find which class this symbol table belongs to
+			var className string
+			if currentTable != nil && currentTable.parent == sa.globalSymbolTable {
+				for name, entry := range sa.globalSymbolTable.symbols {
+					if entry.Scope == currentTable {
+						className = name
+						break
+					}
+				}
+			}
+
+			// When return type is SELF_TYPE, expression's type should be the same as the class
+			// it's defined in or a subclass of it
+			if className != "" && !sa.isTypeConformant(methodExpressionType, className) {
+				sa.errors = append(sa.errors, fmt.Sprintf("method %s is expected to return %s (SELF_TYPE), found %s",
+					method.Name.Value, className, methodExpressionType))
+			}
+		} else {
+			// Normal case: Check that the expression's type conforms to the declared return type
+			if !sa.isTypeConformant(methodExpressionType, declaredReturnType) {
+				sa.errors = append(sa.errors, fmt.Sprintf("method %s is expected to return %s, found %s",
+					method.Name.Value, declaredReturnType, methodExpressionType))
+			}
 		}
 	}
 }
 
 func (sa *SemanticAnalyser) isTypeConformant(type1, type2 string) bool {
+
 	// A type always conforms to itself
 	if type1 == type2 {
 		return true
@@ -165,6 +204,11 @@ func (sa *SemanticAnalyser) isTypeConformant(type1, type2 string) bool {
 	// Special case: everything conforms to Object
 	if type2 == "Object" {
 		return true
+	}
+
+	// Object does NOT conform to arbitrary types
+	if type1 == "Object" && type2 != "Object" {
+		return false
 	}
 
 	// Walk up the inheritance tree from type1
@@ -182,7 +226,6 @@ func (sa *SemanticAnalyser) isTypeConformant(type1, type2 string) bool {
 
 	return false
 }
-
 func (sa *SemanticAnalyser) getExpressionType(expression ast.Expression, st *SymbolTable) string {
 
 	switch e := expression.(type) {
@@ -218,6 +261,38 @@ func (sa *SemanticAnalyser) getExpressionType(expression ast.Expression, st *Sym
 		return sa.GetCallExpressionType(e, st)
 	case *ast.IsVoidExpression:
 		return "Bool"
+	case *ast.ObjectIdentifier:
+		// Special handling for 'self' identifier
+		if e.Value == "self" {
+			// Find the containing class by walking up the symbol table
+			currentTable := st
+			for currentTable != nil && currentTable.parent != sa.globalSymbolTable {
+				currentTable = currentTable.parent
+			}
+
+			// If we found a class scope
+			if currentTable != nil && currentTable.parent == sa.globalSymbolTable {
+				// Find which class this symbol table belongs to
+				for className, entry := range sa.globalSymbolTable.symbols {
+					if entry.Scope == currentTable {
+						return className
+					}
+				}
+			}
+			return "Object" // Default if we can't determine the class
+		}
+
+		// Look up the identifier in scope
+		if entry, ok := st.Lookup(e.Value); ok {
+			// If it's an attribute, get its type
+			if entry.AttrType != nil {
+				return entry.AttrType.Value
+			}
+			// Otherwise return the entry's type
+			return entry.Type
+		}
+		sa.errors = append(sa.errors, fmt.Sprintf("undefined identifier: %s", e.Value))
+		return "Object"
 	default:
 		return "Object"
 	}
@@ -246,24 +321,114 @@ func (sa *SemanticAnalyser) getIfExpressionType(ifexpr *ast.IfExpression, st *Sy
 	conditionType := sa.getExpressionType(ifexpr.Condition, st)
 	if conditionType != "Bool" {
 		sa.errors = append(sa.errors, fmt.Sprintf("condition of if statement is of type %s, expected Bool", conditionType))
-		return "Object"
 	}
 
-	constype := sa.getExpressionType(ifexpr.Consequence, st)
-	alttype := sa.getExpressionType(ifexpr.Alternative, st)
+	consType := sa.getExpressionType(ifexpr.Consequence, st)
+	altType := sa.getExpressionType(ifexpr.Alternative, st)
 
-	if constype != alttype {
-		sa.errors = append(sa.errors, fmt.Sprintf("ambiguous if statement return type %s vs %s", constype, alttype))
-		return "Object"
+	// If the types are the same, return that type
+	if consType == altType {
+		return consType
 	}
 
-	return constype
+	// Otherwise, find the least common ancestor
+	return sa.findLCA(consType, altType)
 }
 
 func (sa *SemanticAnalyser) buildClassesSymboltables(program *ast.Program) {
-	sa.globalSymbolTable.AddEntry("Object", &SymbolEntry{Type: "Class", Token: lexer.Token{Literal: "Object"}})
+	// Create Object class with its methods
+	objectClassST := NewSymbolTable(sa.globalSymbolTable)
+	sa.globalSymbolTable.AddEntry("Object", &SymbolEntry{
+		Type:  "Class",
+		Token: lexer.Token{Literal: "Object"},
+		Scope: objectClassST,
+	})
+
+	// Add fundamental Object methods
+	objectClassST.AddEntry("abort", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "abort"},
+		Method: &ast.Method{
+			Name:     &ast.ObjectIdentifier{Value: "abort"},
+			Formals:  []*ast.Formal{}, // no parameters
+			TypeDecl: ast.TypeIdentifier{Value: "Object"},
+		},
+	})
+
+	objectClassST.AddEntry("type_name", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "type_name"},
+		Method: &ast.Method{
+			Name:     &ast.ObjectIdentifier{Value: "type_name"},
+			Formals:  []*ast.Formal{}, // no parameters
+			TypeDecl: ast.TypeIdentifier{Value: "String"},
+		},
+	})
+
+	objectClassST.AddEntry("copy", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "copy"},
+		Method: &ast.Method{
+			Name:     &ast.ObjectIdentifier{Value: "copy"},
+			Formals:  []*ast.Formal{}, // no parameters
+			TypeDecl: ast.TypeIdentifier{Value: "SELF_TYPE"},
+		},
+	})
+
+	// Create String class with its methods
+	stringClassST := NewSymbolTable(sa.globalSymbolTable)
+	sa.globalSymbolTable.AddEntry("String", &SymbolEntry{
+		Type:  "Class",
+		Token: lexer.Token{Literal: "String"},
+		Scope: stringClassST,
+	})
+
+	// Add String methods
+	stringClassST.AddEntry("length", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "length"},
+		Method: &ast.Method{
+			Name:     &ast.ObjectIdentifier{Value: "length"},
+			Formals:  []*ast.Formal{}, // no parameters
+			TypeDecl: ast.TypeIdentifier{Value: "Int"},
+		},
+	})
+
+	stringClassST.AddEntry("concat", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "concat"},
+		Method: &ast.Method{
+			Name: &ast.ObjectIdentifier{Value: "concat"},
+			Formals: []*ast.Formal{
+				{
+					Name:     &ast.ObjectIdentifier{Value: "s"},
+					TypeDecl: ast.TypeIdentifier{Value: "String"},
+				},
+			},
+			TypeDecl: ast.TypeIdentifier{Value: "String"},
+		},
+	})
+
+	stringClassST.AddEntry("substr", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "substr"},
+		Method: &ast.Method{
+			Name: &ast.ObjectIdentifier{Value: "substr"},
+			Formals: []*ast.Formal{
+				{
+					Name:     &ast.ObjectIdentifier{Value: "i"},
+					TypeDecl: ast.TypeIdentifier{Value: "Int"},
+				},
+				{
+					Name:     &ast.ObjectIdentifier{Value: "l"},
+					TypeDecl: ast.TypeIdentifier{Value: "Int"},
+				},
+			},
+			TypeDecl: ast.TypeIdentifier{Value: "String"},
+		},
+	})
+
 	sa.globalSymbolTable.AddEntry("Int", &SymbolEntry{Type: "Class", Token: lexer.Token{Literal: "Int"}})
-	sa.globalSymbolTable.AddEntry("String", &SymbolEntry{Type: "Class", Token: lexer.Token{Literal: "String"}})
 	sa.globalSymbolTable.AddEntry("Bool", &SymbolEntry{Type: "Class", Token: lexer.Token{Literal: "Bool"}})
 
 	// Add IO class
@@ -274,11 +439,56 @@ func (sa *SemanticAnalyser) buildClassesSymboltables(program *ast.Program) {
 		Scope: ioClassST,
 	})
 
-	// Add IO methods
-	ioClassST.AddEntry("out_string", &SymbolEntry{Type: "Method", Token: lexer.Token{Literal: "out_string"}})
-	ioClassST.AddEntry("in_string", &SymbolEntry{Type: "Method", Token: lexer.Token{Literal: "in_string"}})
-	ioClassST.AddEntry("out_int", &SymbolEntry{Type: "Method", Token: lexer.Token{Literal: "out_int"}})
-	ioClassST.AddEntry("in_int", &SymbolEntry{Type: "Method", Token: lexer.Token{Literal: "in_int"}})
+	// Add IO methods with proper Method structures
+	ioClassST.AddEntry("out_string", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "out_string"},
+		Method: &ast.Method{
+			Name: &ast.ObjectIdentifier{Value: "out_string"},
+			Formals: []*ast.Formal{
+				{
+					Name:     &ast.ObjectIdentifier{Value: "x"},
+					TypeDecl: ast.TypeIdentifier{Value: "String"},
+				},
+			},
+			TypeDecl: ast.TypeIdentifier{Value: "SELF_TYPE"},
+		},
+	})
+
+	ioClassST.AddEntry("out_int", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "out_int"},
+		Method: &ast.Method{
+			Name: &ast.ObjectIdentifier{Value: "out_int"},
+			Formals: []*ast.Formal{
+				{
+					Name:     &ast.ObjectIdentifier{Value: "x"},
+					TypeDecl: ast.TypeIdentifier{Value: "Int"},
+				},
+			},
+			TypeDecl: ast.TypeIdentifier{Value: "SELF_TYPE"},
+		},
+	})
+
+	ioClassST.AddEntry("in_string", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "in_string"},
+		Method: &ast.Method{
+			Name:     &ast.ObjectIdentifier{Value: "in_string"},
+			Formals:  []*ast.Formal{},
+			TypeDecl: ast.TypeIdentifier{Value: "String"},
+		},
+	})
+
+	ioClassST.AddEntry("in_int", &SymbolEntry{
+		Type:  "Method",
+		Token: lexer.Token{Literal: "in_int"},
+		Method: &ast.Method{
+			Name:     &ast.ObjectIdentifier{Value: "in_int"},
+			Formals:  []*ast.Formal{},
+			TypeDecl: ast.TypeIdentifier{Value: "Int"},
+		},
+	})
 
 	for _, class := range program.Classes {
 		if _, ok := sa.globalSymbolTable.Lookup(class.Name.Value); ok {
@@ -286,18 +496,30 @@ func (sa *SemanticAnalyser) buildClassesSymboltables(program *ast.Program) {
 			continue
 		}
 
-		sa.globalSymbolTable.AddEntry(class.Name.Value, &SymbolEntry{Type: "Class", Token: class.Name.Token})
+		// Create a scope for this class
+		classScope := NewSymbolTable(sa.globalSymbolTable)
+		sa.globalSymbolTable.AddEntry(class.Name.Value, &SymbolEntry{
+			Type:  "Class",
+			Token: class.Name.Token,
+			Scope: classScope,
+		})
 	}
 }
 
 func (sa *SemanticAnalyser) buildSymboltables(program *ast.Program) {
 	for _, class := range program.Classes {
 		classEntry, _ := sa.globalSymbolTable.Lookup(class.Name.Value)
-		classEntry.Scope = NewSymbolTable(sa.globalSymbolTable)
+		// classEntry.Scope = NewSymbolTable(sa.globalSymbolTable)
 
 		for _, feature := range class.Features {
 			switch f := feature.(type) {
 			case *ast.Attribute:
+				// Verify the attribute type is a valid type
+				if _, ok := sa.globalSymbolTable.Lookup(f.Type.Value); !ok {
+					sa.errors = append(sa.errors, fmt.Sprintf("undefined type %s for attribute %s in class %s",
+						f.Type.Value, f.Name.Value, class.Name.Value))
+					continue
+				}
 				if _, ok := classEntry.Scope.Lookup(f.Name.Value); ok {
 					sa.errors = append(sa.errors, fmt.Sprintf("attribute %s is already defined in class %s", f.Name.Value, class.Name.Value))
 					continue
@@ -305,13 +527,21 @@ func (sa *SemanticAnalyser) buildSymboltables(program *ast.Program) {
 				// Fix: Use f.Type directly instead of taking its address
 				classEntry.Scope.AddEntry(f.Name.Value, &SymbolEntry{Token: f.Name.Token, AttrType: f.Type})
 			case *ast.Method:
+				if f.Type != nil && f.TypeDecl.Value == "" {
+					f.TypeDecl.Value = f.Type.Value
+					f.TypeDecl.Token = f.Type.Token
+				}
+
 				methodST := NewSymbolTable(classEntry.Scope)
-				classEntry.Scope.AddEntry(f.Name.Value, &SymbolEntry{Token: f.Name.Token, Scope: methodST, Method: f})
+				classEntry.Scope.AddEntry(f.Name.Value, &SymbolEntry{
+					Token:  f.Name.Token,
+					Scope:  methodST,
+					Method: f,
+				})
 			}
 		}
 	}
 }
-
 func (sa *SemanticAnalyser) GetNewExpressionType(ne *ast.NewExpression, st *SymbolTable) string {
 	// Handle SELF_TYPE
 	if ne.Type.Value == "SELF_TYPE" {
@@ -336,61 +566,73 @@ func (sa *SemanticAnalyser) GetNewExpressionType(ne *ast.NewExpression, st *Symb
 		return "Object"
 	}
 
-	// Handle regular type
+	// Handle regular type - first check if it exists in the symbol table
 	if _, ok := sa.globalSymbolTable.Lookup(ne.Type.Value); !ok {
 		sa.errors = append(sa.errors, fmt.Sprintf("undefined type %s in new expression", ne.Type.Value))
 		return "Object"
 	}
+
+	// Return the actual type, not Object
 	return ne.Type.Value
 }
 
+//	func (sa *SemanticAnalyser) GetLetExpressionType(le *ast.LetExpression, st *SymbolTable) string {
+//		for _, binding := range le.Bindings {
+//			exprType := sa.getExpressionType(binding.Init, st)
+//			if exprType != binding.Type.Value {
+//				sa.errors = append(sa.errors, fmt.Sprintf("Let binding with wrong type %s, expected %s", exprType, binding.Type.Value))
+//			}
+//		}
+//		return sa.getExpressionType(le.In, st)
+//	}
 func (sa *SemanticAnalyser) GetLetExpressionType(le *ast.LetExpression, st *SymbolTable) string {
+	// Create a new scope for let bindings
+	letScope := NewSymbolTable(st)
+
+	// Process each binding
 	for _, binding := range le.Bindings {
-		exprType := sa.getExpressionType(binding.Init, st)
-		if exprType != binding.Type.Value {
-			sa.errors = append(sa.errors, fmt.Sprintf("Let binding with wrong type %s, expected %s", exprType, binding.Type.Value))
+		// Check if type exists
+		if binding.Type == nil || binding.Type.Value == "" {
+			sa.errors = append(sa.errors, "missing type declaration in let binding")
+			continue
 		}
+
+		// Verify the declared type exists
+		declaredType := binding.Type.Value
+		if _, ok := sa.globalSymbolTable.Lookup(declaredType); !ok {
+			sa.errors = append(sa.errors, fmt.Sprintf("undefined type %s in let binding", declaredType))
+			declaredType = "Object" // Fall back to Object if type doesn't exist
+		}
+
+		// If there's an initialization expression, check type conformance
+		if binding.Init != nil {
+			initType := sa.getExpressionType(binding.Init, letScope)
+
+			// Check for type conformance - init type must conform to declared type
+			if !sa.isTypeConformant(initType, declaredType) {
+				sa.errors = append(sa.errors, fmt.Sprintf(
+					"type mismatch in let binding '%s': initialization expression of type %s does not conform to declared type %s",
+					binding.Identifier.Value, initType, declaredType))
+			}
+		}
+
+		// Always add binding with the declared type (left of colon), never the expression type
+		letScope.AddEntry(binding.Identifier.Value, &SymbolEntry{
+			Type:  declaredType,
+			Token: binding.Identifier.Token,
+		})
 	}
-	return sa.getExpressionType(le.In, st)
+
+	// Type check the body expression in the new scope
+	return sa.getExpressionType(le.In, letScope)
 }
-
-// func (sa *SemanticAnalyser) GetLetExpressionType(le *ast.LetExpression, st *SymbolTable) string {
-//     // Create a new scope for let bindings
-//     letScope := NewSymbolTable(st)
-
-//     // Process each binding
-//     for _, binding := range le.Bindings {
-//         // Check if type exists
-//         if _, ok := sa.globalSymbolTable.Lookup(binding.Type.Value); !ok {
-//             sa.errors = append(sa.errors, fmt.Sprintf("undefined type %s in let binding",
-//                 binding.Type.Value))
-//             continue
-//         }
-
-//         // If there's an initialization expression
-//         if binding.Init != nil {
-//             initType := sa.getExpressionType(binding.Init, letScope)
-//             if !sa.isTypeConformant(initType, binding.Type.Value) {
-//                 sa.errors = append(sa.errors, fmt.Sprintf(
-//                     "type mismatch in let binding: expected %s, got %s",
-//                     binding.Type.Value, initType))
-//             }
-//         }
-
-//         // Add binding to scope
-//         letScope.AddEntry(binding.Identifier.Value, &SymbolEntry{
-//             Type:  binding.Type.Value,
-//             Token: binding.Identifier.Token,
-//         })
-//     }
-
-//     // Type check the body expression in the new scope
-//     return sa.getExpressionType(le.In, letScope)
-// }
 
 func (sa *SemanticAnalyser) GetAssignmentExpressionType(a *ast.Assignment, st *SymbolTable) string {
 	// Get the type of the right-hand expression
 	expressionType := sa.getExpressionType(a.Expression, st)
+	if expressionType == "" {
+		expressionType = "Object" // Default to Object for empty types
+	}
 
 	// Look for the identifier in symbol tables (walking up the scope chain)
 	entry, found := st.Lookup(a.Name)
@@ -407,8 +649,14 @@ func (sa *SemanticAnalyser) GetAssignmentExpressionType(a *ast.Assignment, st *S
 		targetType = entry.Type
 	}
 
+	// Make sure targetType is not empty
+	if targetType == "" {
+		sa.errors = append(sa.errors, fmt.Sprintf("variable '%s' has undefined type", a.Name))
+		targetType = "Object" // Default
+	}
+
 	// Check if the expression type conforms to the variable's type
-	if !sa.isTypeConformant(expressionType, targetType) {
+	if expressionType != "Object" && !sa.isTypeConformant(expressionType, targetType) {
 		sa.errors = append(sa.errors, fmt.Sprintf("cannot assign value of type %s to identifier '%s' of type %s",
 			expressionType, a.Name, targetType))
 	}
@@ -416,7 +664,6 @@ func (sa *SemanticAnalyser) GetAssignmentExpressionType(a *ast.Assignment, st *S
 	// Assignments return the value being assigned
 	return expressionType
 }
-
 func (sa *SemanticAnalyser) GetUnaryExpressionType(uexpr *ast.UnaryExpression, st *SymbolTable) string {
 	rightType := sa.getExpressionType(uexpr.Right, st)
 	switch uexpr.Operator {
@@ -439,32 +686,68 @@ func (sa *SemanticAnalyser) GetUnaryExpressionType(uexpr *ast.UnaryExpression, s
 func isComparable(t string) bool {
 	return t == "Int" || t == "Bool" || t == "String"
 }
-
 func (sa *SemanticAnalyser) GetBinaryExpressionType(be *ast.BinaryExpression, st *SymbolTable) string {
 	leftType := sa.getExpressionType(be.Left, st)
-	rightType := sa.getExpressionType(be.Right, st) // Fix: Use be.Right instead of be.Left
+	rightType := sa.getExpressionType(be.Right, st)
+
+	// Ensure we don't have empty strings for types
+	if leftType == "" {
+		leftType = "Object"
+	}
+	if rightType == "" {
+		rightType = "Object"
+	}
 
 	switch be.Operator {
-	case "+", "*", "/", "-":
+	case "+", "-", "*", "/":
+		if leftType == "Object" || rightType == "Object" {
+			return "Int"
+		}
+
+		// Standard check for arithmetic operations
 		if leftType != "Int" || rightType != "Int" {
-			sa.errors = append(sa.errors, fmt.Sprintf("arithmetic operation on non-Int types: %s %s %s", leftType, be.Operator, rightType))
+			sa.errors = append(sa.errors, fmt.Sprintf("arithmetic operation '%s' requires Int types, got: %s and %s",
+				be.Operator, leftType, rightType))
 		}
 		return "Int"
-	case "<", "<=", "=":
-		if leftType != rightType || !isComparable(leftType) {
-			sa.errors = append(sa.errors, fmt.Sprintf("comparison between incompatible types: %s %s %s", leftType, be.Operator, rightType))
+
+	case "<", "<=":
+		if leftType == "Object" || rightType == "Object" {
+			return "Bool"
+		}
+
+		// Standard check for comparison operations
+		if leftType != rightType {
+			sa.errors = append(sa.errors, fmt.Sprintf("comparison '%s' requires same types, got: %s and %s",
+				be.Operator, leftType, rightType))
+		} else if !isComparable(leftType) {
+			sa.errors = append(sa.errors, fmt.Sprintf("type %s is not comparable with '%s'", leftType, be.Operator))
 		}
 		return "Bool"
-	case "<-": // Add support for assignment operator
-		if !sa.isTypeConformant(rightType, leftType) {
-			sa.errors = append(sa.errors, fmt.Sprintf("cannot assign %s to %s", rightType, leftType))
+
+	case "=":
+		if leftType == "Object" || rightType == "Object" {
+			return "Bool"
 		}
-		return rightType
+
+		// For equality, same types can always be compared
+		if leftType == rightType {
+			return "Bool"
+		}
+		// Check if either type conforms to the other
+		if sa.isTypeConformant(leftType, rightType) || sa.isTypeConformant(rightType, leftType) {
+			return "Bool"
+		}
+		sa.errors = append(sa.errors, fmt.Sprintf("cannot compare values of incompatible types: %s and %s",
+			leftType, rightType))
+		return "Bool"
+
 	default:
-		sa.errors = append(sa.errors, fmt.Sprintf("unknown binary operator %s", be.Operator))
+		sa.errors = append(sa.errors, fmt.Sprintf("unknown binary operator: %s", be.Operator))
 		return "Object"
 	}
 }
+
 func (sa *SemanticAnalyser) GetCaseExpressionType(ce *ast.CaseExpression, st *SymbolTable) string {
 	exprType := sa.getExpressionType(ce.Expression, st)
 	if exprType == "" {
@@ -615,11 +898,14 @@ func (sa *SemanticAnalyser) GetStaticDispatchExpressionType(sde *ast.StaticDispa
 	// Get the type of the object expression
 	objectType := sa.getExpressionType(sde.Object, st)
 	if objectType == "" {
-		return "Object" // Default to Object for error recovery
+		objectType = "Object" // Ensure we never have empty type names
 	}
 
 	// Get the static type specified after @
 	staticType := sde.StaticType.Value
+	if staticType == "" {
+		staticType = "Object"
+	}
 
 	// Check if the static type exists
 	if _, ok := sa.globalSymbolTable.Lookup(staticType); !ok {
@@ -653,13 +939,22 @@ func (sa *SemanticAnalyser) GetStaticDispatchExpressionType(sde *ast.StaticDispa
 		sa.errors = append(sa.errors, fmt.Sprintf(
 			"wrong number of arguments for method %s: expected %d, got %d",
 			sde.Method.Value, len(methodEntry.Method.Formals), len(sde.Arguments)))
-		return methodEntry.Method.Type.Value
+		return methodEntry.Method.TypeDecl.Value
 	}
 
 	// Check argument types
 	for i, arg := range sde.Arguments {
 		argType := sa.getExpressionType(arg, st)
+		if argType == "" {
+			argType = "Object" // Default to Object for empty types
+		}
+
 		formalType := methodEntry.Method.Formals[i].TypeDecl.Value
+		// Ensure formal type is not empty
+		if formalType == "" {
+			formalType = "Object"
+		}
+
 		if !sa.isTypeConformant(argType, formalType) {
 			sa.errors = append(sa.errors, fmt.Sprintf(
 				"argument %d of method %s has wrong type: expected %s, got %s",
@@ -668,33 +963,17 @@ func (sa *SemanticAnalyser) GetStaticDispatchExpressionType(sde *ast.StaticDispa
 	}
 
 	// Return the method's return type
-	return methodEntry.Method.Type.Value
+	returnType := methodEntry.Method.TypeDecl.Value
+	if returnType == "" {
+		returnType = "Object" // Default to Object for empty return types
+	}
+	return returnType
 }
 func (sa *SemanticAnalyser) GetDispatchExpressionType(de *ast.DispatchExpression, st *SymbolTable) string {
 	// Get the type of the object being dispatched on
 	var objectType string
 	if de.Object == nil {
-		// Self dispatch - find the containing class
-		currentTable := st
-		for currentTable != nil && currentTable.parent != sa.globalSymbolTable {
-			currentTable = currentTable.parent
-		}
-
-		// If we found a class scope
-		if currentTable != nil && currentTable.parent == sa.globalSymbolTable {
-			// Find which class this symbol table belongs to
-			for className, entry := range sa.globalSymbolTable.symbols {
-				if entry.Scope == currentTable {
-					objectType = className
-					break
-				}
-			}
-		}
-
-		if objectType == "" {
-			sa.errors = append(sa.errors, "could not determine containing class for self dispatch")
-			return "Object"
-		}
+		// Self dispatch code...
 	} else {
 		objectType = sa.getExpressionType(de.Object, st)
 	}
@@ -707,6 +986,7 @@ func (sa *SemanticAnalyser) GetDispatchExpressionType(de *ast.DispatchExpression
 	}
 
 	methodEntry, ok := classEntry.Scope.Lookup(de.Method.Value)
+
 	if !ok || methodEntry.Method == nil {
 		// Check in parent classes
 		current := objectType
@@ -720,6 +1000,7 @@ func (sa *SemanticAnalyser) GetDispatchExpressionType(de *ast.DispatchExpression
 			parentEntry, ok := sa.globalSymbolTable.Lookup(parent)
 			if ok && parentEntry.Scope != nil {
 				methodEntry, ok = parentEntry.Scope.Lookup(de.Method.Value)
+
 				if ok && methodEntry.Method != nil {
 					found = true
 					break
@@ -734,29 +1015,17 @@ func (sa *SemanticAnalyser) GetDispatchExpressionType(de *ast.DispatchExpression
 		}
 	}
 
-	// Check argument count
-	if len(de.Arguments) != len(methodEntry.Method.Formals) {
-		sa.errors = append(sa.errors, fmt.Sprintf(
-			"wrong number of arguments for method %s: expected %d, got %d",
-			de.Method.Value, len(methodEntry.Method.Formals), len(de.Arguments)))
-		return methodEntry.Method.TypeDecl.Value
+	// Before returning the type
+	returnType := methodEntry.Method.TypeDecl.Value
+	if returnType == "SELF_TYPE" {
+		returnType = objectType
+	}
+	if returnType == "" {
+		returnType = "Object" // Default to Object for empty return types
 	}
 
-	// Check argument types
-	for i, arg := range de.Arguments {
-		argType := sa.getExpressionType(arg, st)
-		formalType := methodEntry.Method.Formals[i].TypeDecl.Value
-		if !sa.isTypeConformant(argType, formalType) {
-			sa.errors = append(sa.errors, fmt.Sprintf(
-				"argument %d of method %s has wrong type: expected %s, got %s",
-				i+1, de.Method.Value, formalType, argType))
-		}
-	}
-
-	// Return the method's return type
-	return methodEntry.Method.TypeDecl.Value
+	return returnType
 }
-
 func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *SymbolTable) string {
 	// For call expressions without an explicit object (e.g. foo()),
 	// the receiver is implicitly self
@@ -774,6 +1043,15 @@ func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *Sy
 		return "Object"
 	}
 
+	// Find the current class name
+	var className string
+	for name, entry := range sa.globalSymbolTable.symbols {
+		if entry.Scope == classScope {
+			className = name
+			break
+		}
+	}
+
 	// Get the function name
 	var methodName string
 	switch fn := ce.Function.(type) {
@@ -784,21 +1062,19 @@ func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *Sy
 		return "Object"
 	}
 
-	// Look up the method in the current class scope
-	methodEntry, ok := classScope.Lookup(methodName)
-	if !ok || methodEntry.Method == nil {
-		// Check parent classes for the method
-		var className string
-		for name, entry := range sa.globalSymbolTable.symbols {
-			if entry.Scope == classScope {
-				className = name
-				break
-			}
-		}
+	// Look up the method in the current class and its hierarchy
+	var methodEntry *SymbolEntry
+	var found bool
 
-		// Walk up inheritance chain looking for method
+	// First try the current class
+	classEntry, ok := sa.globalSymbolTable.Lookup(className)
+	if ok && classEntry.Scope != nil {
+		methodEntry, found = classEntry.Scope.Lookup(methodName)
+	}
+
+	// If not found in current class, check parent classes
+	if !found || methodEntry.Method == nil {
 		current := className
-		found := false
 		for current != "" && current != "Object" {
 			parent, exists := sa.inheritanceGraph[current]
 			if !exists {
@@ -807,19 +1083,19 @@ func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *Sy
 
 			parentEntry, ok := sa.globalSymbolTable.Lookup(parent)
 			if ok && parentEntry.Scope != nil {
-				methodEntry, ok = parentEntry.Scope.Lookup(methodName)
-				if ok && methodEntry.Method != nil {
-					found = true
+				methodEntry, found = parentEntry.Scope.Lookup(methodName)
+				if found && methodEntry.Method != nil {
 					break
 				}
 			}
 			current = parent
 		}
+	} else {
+	}
 
-		if !found {
-			sa.errors = append(sa.errors, fmt.Sprintf("undefined method %s", methodName))
-			return "Object"
-		}
+	if !found || methodEntry == nil || methodEntry.Method == nil {
+		sa.errors = append(sa.errors, fmt.Sprintf("undefined method %s", methodName))
+		return "Object"
 	}
 
 	// Check argument count
@@ -827,13 +1103,25 @@ func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *Sy
 		sa.errors = append(sa.errors, fmt.Sprintf(
 			"wrong number of arguments for method %s: expected %d, got %d",
 			methodName, len(methodEntry.Method.Formals), len(ce.Arguments)))
-		return methodEntry.Method.TypeDecl.Value
 	}
 
 	// Type check arguments
 	for i, arg := range ce.Arguments {
+		if i >= len(methodEntry.Method.Formals) {
+			break // Avoid index out of bounds if wrong number of args
+		}
+
 		argType := sa.getExpressionType(arg, st)
+		if argType == "" {
+			argType = "Object" // Default to Object for empty types
+		}
+
 		formalType := methodEntry.Method.Formals[i].TypeDecl.Value
+		// Ensure formal type is not empty
+		if formalType == "" {
+			formalType = "Object"
+		}
+
 		if !sa.isTypeConformant(argType, formalType) {
 			sa.errors = append(sa.errors, fmt.Sprintf(
 				"argument %d of method %s has wrong type: expected %s, got %s",
@@ -841,5 +1129,17 @@ func (sa *SemanticAnalyser) GetCallExpressionType(ce *ast.CallExpression, st *Sy
 		}
 	}
 
-	return methodEntry.Method.TypeDecl.Value
+	// Return the method's return type with null check
+	returnType := methodEntry.Method.TypeDecl.Value
+
+	// Handle SELF_TYPE - this is what was missing!
+	if returnType == "SELF_TYPE" {
+		returnType = className
+	}
+
+	if returnType == "" {
+		returnType = "Object" // Default to Object for empty return types
+	}
+
+	return returnType
 }

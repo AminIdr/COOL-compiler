@@ -1,7 +1,7 @@
 class Main inherits IO{
     age:Int <- 18;
 
-    fct(): Object {
+    fct(): SELF_TYPE {
         out_int(age)
     };
 

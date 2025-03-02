@@ -7,7 +7,7 @@ class Main inherits IO{
         fi
     };
     
-    main(): Object {
+    main(): SELF_TYPE {
         let num: Int <- 5 in
             out_int(factorial(num))
     };

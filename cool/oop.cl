@@ -1,10 +1,10 @@
 class Animal inherits IO{
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am an animal\n");
         }
     };
-    custom_animal(): String {
+    custom_animal(): SELF_TYPE {
       {
            out_string("Method of Animal\n");
       }
@@ -12,12 +12,12 @@ class Animal inherits IO{
 };
 
 class Dog inherits Animal {
-  say_hello(): String{
+  say_hello(): SELF_TYPE{
     {
       out_string("I am a dog\n");
     }
   };
-  custom_dog(): String{
+  custom_dog(): SELF_TYPE{
     {
       out_string("Method of Dog\n");
     }
@@ -26,19 +26,19 @@ class Dog inherits Animal {
 
 
 class Dobermann inherits Dog {
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am a Dobermann\n");
         }
     };
-      custom_dobermann(): String{
+      custom_dobermann(): SELF_TYPE{
     {
       out_string("Method of Dobermann\n");
     }
   };
 };
 class Main inherits IO{
-  hello(): Object {
+  hello(): SELF_TYPE {
     out_string("Hello World!\n")
   };
 

@@ -1,5 +1,5 @@
 class Animal inherits IO{
-    say_hello() : String {
+    say_hello() : SELF_TYPE {
         {
             out_string("I am an animal\n");
         }
@@ -7,7 +7,7 @@ class Animal inherits IO{
 };
 
 class Main inherits IO{
-  main(): Object {
+  main(): SELF_TYPE {
     {
       let x:Int <- 5 in {
         case x of

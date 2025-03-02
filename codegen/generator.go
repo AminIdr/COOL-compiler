@@ -1815,7 +1815,6 @@ func (g *Generator) generateStringSubstr() {
 
 	block.NewRet(typedStringObj)
 }
-
 func (g *Generator) sortBranchesBySpecificity(branches []*ast.Case) []*ast.Case {
 	sorted := make([]*ast.Case, len(branches))
 	copy(sorted, branches)
@@ -1825,13 +1824,30 @@ func (g *Generator) sortBranchesBySpecificity(branches []*ast.Case) []*ast.Case 
 		type1 := sorted[i].TypeIdentifier.Value
 		type2 := sorted[j].TypeIdentifier.Value
 
+		// Special case for same types
+		if type1 == type2 {
+			return false
+		}
+
 		// Check if type1 is a subclass of type2
 		current := type1
+		visited := make(map[string]bool) // Track visited classes to prevent cycles
 		for current != "Object" {
 			if current == type2 {
 				return true
 			}
-			current = g.classInheritance[current]
+
+			// Prevent infinite loops in case of circular inheritance
+			if visited[current] {
+				return false
+			}
+			visited[current] = true
+
+			parent, exists := g.classInheritance[current]
+			if !exists {
+				return false
+			}
+			current = parent
 		}
 		return false
 	})
